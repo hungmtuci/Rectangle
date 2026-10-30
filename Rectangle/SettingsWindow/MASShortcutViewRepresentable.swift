@@ -13,7 +13,8 @@ struct MASShortcutViewRepresentable: NSViewRepresentable {
     var recordsMouseButtons = false
 
     func makeNSView(context: Context) -> MASShortcutView {
-        let view = recordsMouseButtons ? WindowActionShortcutView() : MASShortcutView()
+        let view = WindowActionShortcutView()
+        view.allowsMouseButtons = recordsMouseButtons
         view.setAssociatedUserDefaultsKey(defaultsKey, withTransformerName: MASDictionaryTransformerName)
         if let validator = validator {
             view.shortcutValidator = validator

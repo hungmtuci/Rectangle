@@ -70,6 +70,35 @@ final class BehaviorSettingsViewModel {
             Notification.Name.greenButtonOverride.post()
         }
     }
+
+    var greenButtonHoverGrid: Bool {
+        didSet {
+            Defaults.greenButtonHoverGrid.enabled = greenButtonHoverGrid
+            Notification.Name.greenButtonHoverGridChanged.post()
+        }
+    }
+
+    var greenButtonGridColumns: Int {
+        didSet {
+            let clamped = GridSelection.clampDimensions(columns: greenButtonGridColumns, rows: greenButtonGridRows).columns
+            if greenButtonGridColumns != clamped {
+                greenButtonGridColumns = clamped
+                return
+            }
+            Defaults.greenButtonGridColumns.value = clamped
+        }
+    }
+
+    var greenButtonGridRows: Int {
+        didSet {
+            let clamped = GridSelection.clampDimensions(columns: greenButtonGridColumns, rows: greenButtonGridRows).rows
+            if greenButtonGridRows != clamped {
+                greenButtonGridRows = clamped
+                return
+            }
+            Defaults.greenButtonGridRows.value = clamped
+        }
+    }
     
     var experimentalAnimations: Bool {
         didSet {
@@ -200,7 +229,14 @@ final class BehaviorSettingsViewModel {
         
         self.doubleClickTitleBar = WindowAction(rawValue: Defaults.doubleClickTitleBar.value - 1) != nil
         self.autoMaximize = !Defaults.autoMaximize.userDisabled
-        self.greenButtonOverride = Defaults.greenButtonOverride.enabled
+        self.greenButtonOverride = Defaults.isGreenButtonClickMaximizeEnabled
+        self.greenButtonHoverGrid = !Defaults.greenButtonHoverGrid.userDisabled
+        let initialGridDims = GridSelection.clampDimensions(
+            columns: Defaults.greenButtonGridColumns.value,
+            rows: Defaults.greenButtonGridRows.value
+        )
+        self.greenButtonGridColumns = initialGridDims.columns
+        self.greenButtonGridRows = initialGridDims.rows
         self.experimentalAnimations = Defaults.experimentalWindowAnimations.enabled
         self.combinedDisplayMode = Defaults.combinedDisplayMode.userEnabled
         self.repeatedMaximizeRestoresPrevious = Defaults.repeatedMaximizeRestoresPrevious.enabled
@@ -244,6 +280,19 @@ final class BehaviorSettingsViewModel {
         Notification.Name.allowAnyShortcut.onPost { [weak self] _ in
             self?.allowAnyShortcut = Defaults.allowAnyShortcut.enabled
         }
+        Notification.Name.greenButtonHoverGridChanged.onPost { [weak self] _ in
+            guard let self else { return }
+            let dims = GridSelection.clampDimensions(
+                columns: Defaults.greenButtonGridColumns.value,
+                rows: Defaults.greenButtonGridRows.value
+            )
+            if self.greenButtonGridColumns != dims.columns {
+                self.greenButtonGridColumns = dims.columns
+            }
+            if self.greenButtonGridRows != dims.rows {
+                self.greenButtonGridRows = dims.rows
+            }
+        }
     }
     
     func reloadFromDefaults() {
@@ -262,7 +311,14 @@ final class BehaviorSettingsViewModel {
         
         self.doubleClickTitleBar = WindowAction(rawValue: Defaults.doubleClickTitleBar.value - 1) != nil
         self.autoMaximize = !Defaults.autoMaximize.userDisabled
-        self.greenButtonOverride = Defaults.greenButtonOverride.enabled
+        self.greenButtonOverride = Defaults.isGreenButtonClickMaximizeEnabled
+        self.greenButtonHoverGrid = !Defaults.greenButtonHoverGrid.userDisabled
+        let initialGridDims = GridSelection.clampDimensions(
+            columns: Defaults.greenButtonGridColumns.value,
+            rows: Defaults.greenButtonGridRows.value
+        )
+        self.greenButtonGridColumns = initialGridDims.columns
+        self.greenButtonGridRows = initialGridDims.rows
         self.experimentalAnimations = Defaults.experimentalWindowAnimations.enabled
         self.combinedDisplayMode = Defaults.combinedDisplayMode.userEnabled
         self.repeatedMaximizeRestoresPrevious = Defaults.repeatedMaximizeRestoresPrevious.enabled
@@ -330,8 +386,9 @@ final class BehaviorSettingsViewModel {
         TodoManager.moveAllIfNeeded(false)
     }
     
+    @MainActor
     func checkForUpdates() {
-        AppDelegate.instance.updaterController?.checkForUpdates(nil)
+        GitHubSoftwareUpdater.shared.checkForUpdates()
     }
     
     private func handleDoubleClickTitleBarToggle(_ enabled: Bool) {
@@ -405,5 +462,10 @@ final class BehaviorSettingsViewModel {
         if let percentValue = preset?.percentValue {
             verticalSplitRatio = percentValue
         }
+    }
+
+    func resetGreenButtonGridDimensions() {
+        greenButtonGridColumns = 6
+        greenButtonGridRows = 4
     }
 }

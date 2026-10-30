@@ -1,7 +1,7 @@
 /// AppDelegate.swift
 
 import Cocoa
-import Sparkle
+import MASShortcut
 import os.log
 
 @main
@@ -10,15 +10,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let accessibilityAuthorization = AccessibilityAuthorization()
     private let statusItem = RectangleStatusItem.instance
     static let windowHistory = WindowHistory()
-    var updaterController: SPUStandardUpdaterController!
     var hasPendingUpdate = false {
         didSet {
             Notification.Name.updateAvailability.post()
         }
     }
 
+    private static var retainedDelegate: AppDelegate?
+    private var retainedMenus: [NSMenu] = []
+
     private var shortcutManager: ShortcutManager!
-    private var windowManager: WindowManager!
+    private(set) var windowManager: WindowManager!
     private var applicationToggle: ApplicationToggle!
     private var windowCalculationFactory: WindowCalculationFactory!
     private var snappingManager: SnappingManager!
@@ -43,8 +45,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     static var instance: AppDelegate {
         NSApp.delegate as! AppDelegate
     }
+
+    static func main() {
+        let app = NSApplication.shared
+        if Bundle.main.path(forResource: "Main", ofType: "storyboardc") == nil {
+            let delegate = AppDelegate()
+            retainedDelegate = delegate
+            delegate.configureProgrammaticMenusIfNeeded(for: app)
+            app.delegate = delegate
+        }
+        _ = NSApplicationMain(CommandLine.argc, CommandLine.unsafeArgv)
+    }
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        terminateOtherRunningInstances()
+        MASShortcutValidator.shared()?.allowAnyShortcutWithOptionModifier = true
+        MASShortcutValidator.shared()?.allowOverridingServicesShortcut = true
+        configureProgrammaticMenusIfNeeded(for: NSApp)
         Defaults.loadFromSupportDir()
         migrateShowEighthsInMenu()
 
@@ -75,9 +92,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         NotificationCenter.default.addObserver(self, selector: #selector(rebuildMenu), name: .showAdditionalSizesInMenuChanged, object: nil)
 
-        updaterController = SPUStandardUpdaterController(updaterDelegate: nil, userDriverDelegate: self)
-        
+        _ = GitHubSoftwareUpdater.shared
         checkAutoCheckForUpdates()
+        syncUpdateMenuItemTitle()
         
         Notification.Name.configImported.onPost(using: { _ in
             self.checkAutoCheckForUpdates()
@@ -129,15 +146,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             case #selector(viewLogging):
                 item.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
             case #selector(checkForUpdates):
-                item.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+                item.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+            case #selector(openGitHubReleases):
+                item.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
             default:
                 break
             }
         }
     }
 
+    @MainActor
     func checkAutoCheckForUpdates() {
-        updaterController.updater.automaticallyChecksForUpdates = Defaults.SUEnableAutomaticChecks.enabled
+        let updater = GitHubSoftwareUpdater.shared
+        updater.automaticallyChecksForUpdates = Defaults.SUEnableAutomaticChecks.enabled
+        updater.checkSilentlyIfDue()
+    }
+
+    @MainActor
+    func syncUpdateMenuItemTitle() {
+        guard let updatesMenuItem else { return }
+        if let newTag = GitHubSoftwareUpdater.shared.availableReleaseTag {
+            updatesMenuItem.title = "Cập nhật mới trên GitHub (\(newTag))…"
+            updatesMenuItem.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
+        } else {
+            updatesMenuItem.title = "Cập nhật qua GitHub…"
+            updatesMenuItem.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+        }
     }
     
     func accessibilityTrusted() {
@@ -280,8 +314,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    @MainActor
     @IBAction func checkForUpdates(_ sender: Any) {
-        updaterController.checkForUpdates(sender)
+        GitHubSoftwareUpdater.shared.checkForUpdates()
+    }
+
+    @MainActor
+    @objc func openGitHubReleases(_ sender: Any) {
+        GitHubSoftwareUpdater.shared.openReleasesPage()
     }
     
     @IBAction func authorizeAccessibility(_ sender: Any) {
@@ -316,6 +356,9 @@ extension AppDelegate: NSMenuDelegate {
         
         updateWindowActionMenuItems(menu: menu)
         updateTodoModeMenuItems(menu: menu)
+        Task { @MainActor [weak self] in
+            self?.syncUpdateMenuItemTitle()
+        }
 
         viewLoggingMenuItem.keyEquivalentModifierMask = .option
         quitMenuItem.keyEquivalent = "q"
@@ -379,8 +422,8 @@ extension AppDelegate: NSMenuDelegate {
             guard !action.excludedFromMenu, let displayName = action.displayName else { continue }
             let newMenuItem = NSMenuItem(title: displayName, action: #selector(executeMenuWindowAction), keyEquivalent: "")
             newMenuItem.representedObject = action
-            if #available(macOS 27.0, *) {
-                newMenuItem.preferredImageVisibility = .visible
+            if newMenuItem.responds(to: Selector(("setPreferredImageVisibility:"))) {
+                newMenuItem.setValue(1, forKey: "preferredImageVisibility")
             }
             if !showAllActions, let category = action.category {
                 // When additional sizes are off, keep Thirds and Size as flat items
@@ -669,24 +712,126 @@ extension AppDelegate {
     }
 }
 
-extension AppDelegate: SPUStandardUserDriverDelegate {
-    
-    var supportsGentleScheduledUpdateReminders: Bool {
-        true
+extension AppDelegate {
+    func configureProgrammaticMenusIfNeeded(for app: NSApplication) {
+        guard mainStatusMenu == nil else { return }
+
+        if app.mainMenu == nil {
+            let mainMenu = NSMenu(title: "Main Menu")
+
+            let appMenuItem = NSMenuItem(title: "Rectangle", action: nil, keyEquivalent: "")
+            let appMenu = NSMenu(title: "Rectangle")
+            appMenu.addItem(withTitle: String(localized: "About Rectangle"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+            appMenu.addItem(.separator())
+            let prefsItem = NSMenuItem(title: String(localized: "Settings…"), action: #selector(openPreferences(_:)), keyEquivalent: ",")
+            prefsItem.target = self
+            appMenu.addItem(prefsItem)
+            let appUpdateItem = NSMenuItem(title: "Cập nhật qua GitHub…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+            appUpdateItem.target = self
+            appMenu.addItem(appUpdateItem)
+            appMenu.addItem(.separator())
+            appMenu.addItem(withTitle: String(localized: "Hide Rectangle"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+            let hideOthers = NSMenuItem(title: String(localized: "Hide Others"), action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+            hideOthers.keyEquivalentModifierMask = [.command, .option]
+            appMenu.addItem(hideOthers)
+            appMenu.addItem(withTitle: String(localized: "Show All"), action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+            appMenu.addItem(.separator())
+            appMenu.addItem(withTitle: String(localized: "Quit Rectangle"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            appMenuItem.submenu = appMenu
+            mainMenu.addItem(appMenuItem)
+
+            let fileMenuItem = NSMenuItem(title: String(localized: "File"), action: nil, keyEquivalent: "")
+            let fileMenu = NSMenu(title: String(localized: "File"))
+            fileMenu.addItem(withTitle: String(localized: "Close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+            fileMenuItem.submenu = fileMenu
+            mainMenu.addItem(fileMenuItem)
+
+            let editMenuItem = NSMenuItem(title: String(localized: "Edit"), action: nil, keyEquivalent: "")
+            let editMenu = NSMenu(title: String(localized: "Edit"))
+            editMenu.addItem(withTitle: String(localized: "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+            editMenu.addItem(withTitle: String(localized: "Redo"), action: Selector(("redo:")), keyEquivalent: "Z")
+            editMenu.addItem(.separator())
+            editMenu.addItem(withTitle: String(localized: "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+            editMenu.addItem(withTitle: String(localized: "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+            editMenu.addItem(withTitle: String(localized: "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+            editMenu.addItem(withTitle: String(localized: "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+            editMenuItem.submenu = editMenu
+            mainMenu.addItem(editMenuItem)
+
+            let windowMenuItem = NSMenuItem(title: String(localized: "Window"), action: nil, keyEquivalent: "")
+            let windowMenu = NSMenu(title: String(localized: "Window"))
+            windowMenu.addItem(withTitle: String(localized: "Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+            windowMenuItem.submenu = windowMenu
+            app.windowsMenu = windowMenu
+            mainMenu.addItem(windowMenuItem)
+
+            app.mainMenu = mainMenu
+        }
+
+        let statusMenu = NSMenu()
+        let ignoreItem = NSMenuItem(title: String(localized: "Ignore frontmost.app"), action: #selector(ignoreFrontMostApp(_:)), keyEquivalent: "")
+        ignoreItem.target = self
+        statusMenu.addItem(ignoreItem)
+        statusMenu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: String(localized: "Settings…"), action: #selector(openPreferences(_:)), keyEquivalent: "")
+        settingsItem.target = self
+        statusMenu.addItem(settingsItem)
+
+        let aboutItem = NSMenuItem(title: String(localized: "About"), action: #selector(showAbout(_:)), keyEquivalent: "")
+        aboutItem.target = self
+        statusMenu.addItem(aboutItem)
+
+        let loggingItem = NSMenuItem(title: String(localized: "View Logging…"), action: #selector(viewLogging(_:)), keyEquivalent: "")
+        loggingItem.target = self
+        loggingItem.isAlternate = true
+        loggingItem.keyEquivalentModifierMask = .option
+        statusMenu.addItem(loggingItem)
+
+        let updatesItem = NSMenuItem(title: "Cập nhật qua GitHub…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        updatesItem.target = self
+        statusMenu.addItem(updatesItem)
+
+        let githubItem = NSMenuItem(title: "GitHub Releases ↗", action: #selector(openGitHubReleases(_:)), keyEquivalent: "")
+        githubItem.target = self
+        statusMenu.addItem(githubItem)
+
+        let quitItem = NSMenuItem(title: String(localized: "Quit Rectangle"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.target = app
+        statusMenu.addItem(quitItem)
+
+        let unauthMenu = NSMenu()
+        unauthMenu.addItem(withTitle: String(localized: "Not Authorized to Control Your Computer"), action: nil, keyEquivalent: "")
+        let authItem = NSMenuItem(title: String(localized: "Authorize…"), action: #selector(authorizeAccessibility(_:)), keyEquivalent: "")
+        authItem.target = self
+        unauthMenu.addItem(authItem)
+        unauthMenu.addItem(.separator())
+        let unauthUpdateItem = NSMenuItem(title: "Cập nhật qua GitHub…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        unauthUpdateItem.target = self
+        unauthMenu.addItem(unauthUpdateItem)
+        let unauthAboutItem = NSMenuItem(title: String(localized: "About"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        unauthAboutItem.target = app
+        unauthMenu.addItem(unauthAboutItem)
+        let unauthQuitItem = NSMenuItem(title: String(localized: "Quit Rectangle"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        unauthQuitItem.target = app
+        unauthMenu.addItem(unauthQuitItem)
+
+        retainedMenus = [statusMenu, unauthMenu]
+        mainStatusMenu = statusMenu
+        unauthorizedMenu = unauthMenu
+        ignoreMenuItem = ignoreItem
+        viewLoggingMenuItem = loggingItem
+        updatesMenuItem = updatesItem
+        quitMenuItem = quitItem
     }
 
-    func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool) -> Bool {
-        if immediateFocus {
-            return true
+    private func terminateOtherRunningInstances() {
+        guard let bundleId = Bundle.main.bundleIdentifier else { return }
+        let currentPid = ProcessInfo.processInfo.processIdentifier
+        for running in NSRunningApplication.runningApplications(withBundleIdentifier: bundleId) where running.processIdentifier != currentPid {
+            if !running.terminate() {
+                running.forceTerminate()
+            }
         }
-        
-        self.hasPendingUpdate = true
-        updatesMenuItem.title = String(localized: "Update Available…")
-        return false
-    }
-    
-    func standardUserDriverWillFinishUpdateSession() {
-        self.hasPendingUpdate = false
-        updatesMenuItem.title = String(localized: "Check for Updates…")
     }
 }

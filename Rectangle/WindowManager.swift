@@ -412,6 +412,199 @@ class WindowManager {
     func hideSizeConstraintWarning() {
         windowSizeWarning?.hide()
     }
+
+    func previewFrame(for action: WindowAction, windowElement: AccessibilityElement, screen: NSScreen? = nil) -> CGRect? {
+        let windowId = windowElement.getWindowId()
+        if action == .restore {
+            guard let windowId, let restoreRect = AppDelegate.windowHistory.restoreRects[windowId] else {
+                return nil
+            }
+            return restoreRect.screenFlipped
+        }
+
+        let sourceScreens = screenDetection.detectScreens(using: windowElement)
+        let usableScreens: UsableScreens?
+        if let screen {
+            usableScreens = screenDetection.detectScreens(at: screen)
+        } else {
+            usableScreens = sourceScreens
+        }
+        guard let usableScreens else { return nil }
+
+        let currentWindowRect = logicalFrame(for: windowElement)
+        guard !currentWindowRect.isNull, windowElement.isSheet != true else { return nil }
+
+        var lastRectangleAction = windowId.flatMap { AppDelegate.windowHistory.lastRectangleActions[$0] }
+        if currentWindowRect != lastRectangleAction?.rect {
+            lastRectangleAction = nil
+        }
+
+        let ignoreTodo = windowId.map { TodoManager.isTodoWindow($0) } ?? false
+        let currentNormalizedRect = currentWindowRect.screenFlipped
+        let currentWindow = Window(id: windowId, rect: currentNormalizedRect)
+        let params = WindowCalculationParameters(
+            window: currentWindow,
+            usableScreens: usableScreens,
+            action: action,
+            lastAction: lastRectangleAction,
+            ignoreTodo: ignoreTodo
+        )
+        guard var calcResult = WindowCalculationFactory.calculationsByAction[action]?.calculate(params) else {
+            return nil
+        }
+
+        let gapsApplicable = calcResult.resultingAction.gapsApplicable
+        if Defaults.gapSize.value > 0, gapsApplicable != .none {
+            let gapSharedEdges = calcResult.resultingSubAction?.gapSharedEdge ?? calcResult.resultingAction.gapSharedEdge
+            calcResult.rect = GapCalculation.applyGaps(
+                calcResult.rect,
+                dimension: gapsApplicable,
+                sharedEdges: gapSharedEdges,
+                gapSize: Defaults.gapSize.value,
+                skipTopGap: Defaults.skipGapTopEdge.enabled
+            )
+        }
+        return calcResult.rect
+    }
+
+    func executeCustomFrame(
+        _ targetAppKitRect: CGRect,
+        isMaximizeEquivalent: Bool = false,
+        on screen: NSScreen,
+        windowElement: AccessibilityElement,
+        completion: (() -> Void)? = nil
+    ) {
+        var completionDeferred = false
+        defer { if !completionDeferred { completion?() } }
+        hideSizeConstraintWarning()
+
+        guard !targetAppKitRect.isNull, windowElement.isSheet != true else {
+            NSSound.beep()
+            return
+        }
+
+        let windowId = windowElement.getWindowId()
+        let pendingDestination = windowAnimator.destination(for: windowElement)
+        let currentWindowRect = pendingDestination ?? windowElement.frame
+        guard !currentWindowRect.isNull else {
+            NSSound.beep()
+            return
+        }
+
+        let lastRectangleAction = windowId.flatMap { AppDelegate.windowHistory.lastRectangleActions[$0] }
+        let windowMovedExternally = currentWindowRect != lastRectangleAction?.rect
+
+        if let windowId, AppDelegate.windowHistory.restoreRects[windowId] == nil || windowMovedExternally {
+            AppDelegate.windowHistory.restoreRects[windowId] = currentWindowRect
+        }
+
+        let ignoreTodo = windowId.map { TodoManager.isTodoWindow($0) } ?? false
+        let visibleFrameOfScreen = screen.adjustedVisibleFrame(ignoreTodo)
+        let sourceScreens = screenDetection.detectScreens(using: windowElement)
+            ?? UsableScreens(currentScreen: screen, numScreens: NSScreen.screens.count)
+
+        let currentNormalizedRect = currentWindowRect.screenFlipped
+        let recordedAction: WindowAction = isMaximizeEquivalent ? .maximize : .specified
+        let calcResult = WindowCalculationResult(
+            rect: targetAppKitRect,
+            screen: screen,
+            resultingAction: recordedAction
+        )
+
+        if pendingDestination == nil && currentNormalizedRect.equalTo(targetAppKitRect) {
+            windowElement.bringToFront()
+            if isMaximizeEquivalent {
+                recordAction(windowId: windowId, resultingRect: currentWindowRect, action: .maximize, subAction: nil)
+            } else if let windowId {
+                AppDelegate.windowHistory.lastRectangleActions.removeValue(forKey: windowId)
+            }
+            return
+        }
+
+        let willResize = targetAppKitRect.size != currentNormalizedRect.size
+        let isFixedSize = (!windowElement.isResizable() && willResize) || windowElement.isSystemDialog == true
+        let resultParameters = ResultParameters(
+            windowId: windowId,
+            action: recordedAction,
+            windowElement: windowElement,
+            calcResult: calcResult,
+            usableScreens: sourceScreens,
+            visibleFrameOfScreen: visibleFrameOfScreen,
+            source: .titleBar,
+            isFixedSize: isFixedSize
+        )
+
+        let isMovedAcrossDisplays = sourceScreens.currentScreen != screen
+        executionID &+= 1
+        let currentExecutionID = executionID
+        let animated = WindowAnimator.enabled && !isFixedSize && !isMovedAcrossDisplays
+
+        let finalizeCustomHistory = { [self] (finalRect: CGRect, shouldIncrement: Bool) in
+            postProcess(result: resultParameters, resultingRect: finalRect, incrementCount: shouldIncrement)
+            if !isMaximizeEquivalent, let windowId {
+                AppDelegate.windowHistory.lastRectangleActions.removeValue(forKey: windowId)
+            }
+        }
+
+        let completeMove = { [self] (animatedFrame: CGRect?) in
+            var waitsForRetry = false
+            defer { if !waitsForRetry { completion?() } }
+            guard executionID == currentExecutionID else { return }
+            var resultingRect = animatedFrame ?? apply(result: resultParameters)
+            if isMovedAcrossDisplays {
+                if calcResult.rect.size != resultingRect.size {
+                    resultingRect = apply(result: resultParameters)
+                    if calcResult.rect.size != resultingRect.size {
+                        waitsForRetry = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(25)) { [weak self] in
+                            defer { completion?() }
+                            guard let self, self.executionID == currentExecutionID else { return }
+                            let finalRect = self.apply(result: resultParameters)
+                            self.windowMovedAcrossDisplays(windowElement: windowElement, resultingRect: finalRect, preservesFocus: false)
+                            windowElement.bringToFront()
+                            finalizeCustomHistory(finalRect, !animated)
+                        }
+                        return
+                    }
+                }
+                windowMovedAcrossDisplays(windowElement: windowElement, resultingRect: resultingRect, preservesFocus: false)
+            }
+            windowElement.bringToFront()
+            finalizeCustomHistory(resultingRect, !animated)
+        }
+
+        completionDeferred = true
+        if animated {
+            if isMaximizeEquivalent {
+                recordAction(windowId: windowId, resultingRect: targetAppKitRect.screenFlipped, action: .maximize, subAction: nil)
+            } else if let windowId {
+                AppDelegate.windowHistory.lastRectangleActions.removeValue(forKey: windowId)
+            }
+            let placement = WindowAnimationPlacement(
+                screenFrame: visibleFrameOfScreen.screenFlipped,
+                sharedEdges: Defaults.moveFixedSizeToEdge.value.alignmentEdges(
+                    for: targetAppKitRect.screenFlipped,
+                    in: visibleFrameOfScreen.screenFlipped
+                ),
+                constrainToScreen: true,
+                gap: CGFloat(Defaults.gapSize.value)
+            )
+            windowAnimator.animate(
+                windowElement,
+                to: targetAppKitRect.screenFlipped,
+                releasedSnap: false,
+                placement: placement,
+                profile: .standard
+            ) { frame in
+                completeMove(frame.isNull ? nil : frame)
+            }
+        } else {
+            windowAnimator.cancel(for: windowElement)
+            windowAnimator.afterPendingWrites {
+                completeMove(nil)
+            }
+        }
+    }
 }
 
 struct ResultParameters {

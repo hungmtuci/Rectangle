@@ -129,7 +129,7 @@ class StackBadgeManager {
 
     /// Break the binding first so re-evaluation can't stack a second action
     /// on the same defaults key.
-    private static func reevaluateToggleShortcut() {
+    static func reevaluateToggleShortcut() {
         unregisterToggleShortcut()
         registerUnregisterToggleShortcut()
     }
@@ -175,6 +175,10 @@ class StackBadgeManager {
     }
 
     private func tick() {
+        if GreenButtonManager.isPopoverActive {
+            dismiss()
+            return
+        }
         let location = NSEvent.mouseLocation
         let dx = location.x - lastMouseLocation.x
         let dy = location.y - lastMouseLocation.y

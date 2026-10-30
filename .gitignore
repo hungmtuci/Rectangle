@@ -23,6 +23,10 @@ Pods
 
 ## Build products
 build/
+.build/
+.swiftpm/
+dist/
+Rectangle.app/
 *.o
 *.LinkFileList
 *.hmap

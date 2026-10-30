@@ -110,6 +110,30 @@ class AccessibilityElement {
         guard let subrole = subrole else { return nil }
         return subrole == .fullScreenButton
     }
+
+    var isZoomButton: Bool? {
+        guard let subrole = subrole else { return nil }
+        return subrole == .zoomButton
+    }
+
+    var isEnabled: Bool? {
+        wrappedElement.getValue(.enabled) as? Bool
+    }
+
+    /// Whether this element is an enabled green stoplight button (Full Screen or Zoom)
+    /// on a window that is not currently in native macOS Full Screen.
+    var isGreenStoplightButton: Bool {
+        guard let currentSubrole = subrole else { return false }
+        guard currentSubrole == .fullScreenButton || currentSubrole == .zoomButton else { return false }
+        guard isEnabled != false else { return false }
+        if currentSubrole == .fullScreenButton {
+            return true
+        }
+        if let windowElement, windowElement.isFullScreen != true {
+            return true
+        }
+        return false
+    }
     
     private var position: CGPoint? {
         get {

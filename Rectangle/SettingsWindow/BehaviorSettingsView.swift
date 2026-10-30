@@ -113,6 +113,78 @@ struct BehaviorSettingsView: View {
             }
             
             
+            // MARK: - Green Button Layout Grid
+            Section {
+                CustomDisclosureGroup(isExpanded: true) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Toggle("Show layout grid when hovering green stoplight button", isOn: $viewModel.greenButtonHoverGrid)
+                            Text("Drag across cells or pick a quick preset to position and resize the window")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Open layout grid shortcut")
+                                Text("Opens the layout grid right at the cursor (use mouse drag or Arrow / Shift+Arrow + Enter)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            MASShortcutViewRepresentable(
+                                defaultsKey: GreenButtonManager.toggleGridDefaultsKey,
+                                validator: viewModel.allowAnyShortcut ? PassthroughShortcutValidator() : MASShortcutValidator.standardRectangleValidator(),
+                                recordingObserver: viewModel.shortcutRecordingObserver
+                            )
+                            .frame(width: 130, height: 22)
+                        }
+
+                        HStack(spacing: 16) {
+                            Stepper(
+                                value: $viewModel.greenButtonGridColumns,
+                                in: GridSelection.columnRange
+                            ) {
+                                Text("Columns: \(viewModel.greenButtonGridColumns)")
+                                    .monospacedDigit()
+                            }
+
+                            Stepper(
+                                value: $viewModel.greenButtonGridRows,
+                                in: GridSelection.rowRange
+                            ) {
+                                Text("Rows: \(viewModel.greenButtonGridRows)")
+                                    .monospacedDigit()
+                            }
+
+                            Spacer()
+
+                            if viewModel.greenButtonGridColumns != 6 || viewModel.greenButtonGridRows != 4 {
+                                Button("Reset (6 × 4)") {
+                                    viewModel.resetGreenButtonGridDimensions()
+                                }
+                                .controlSize(.small)
+                            }
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Toggle("Green stoplight button maximizes instead of Full Screen", isOn: $viewModel.greenButtonOverride)
+                            Text("Hold any modifier key or use the window menu for default macOS behavior")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.top, 4)
+                    .padding(.leading, 12)
+                } label: {
+                    Label("Green Button Layout Grid", systemImage: "square.grid.3x2")
+                }
+            }
+
             // MARK: - Maximize
             Section {
                 CustomDisclosureGroup {
@@ -124,13 +196,6 @@ struct BehaviorSettingsView: View {
                         
                         Toggle("Double-click window title bar to maximize/restore", isOn: $viewModel.doubleClickTitleBar)
                         Toggle("Repeated maximize restores the previous size and position", isOn: $viewModel.repeatedMaximizeRestoresPrevious)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Toggle("Green stoplight button maximizes instead of Full Screen", isOn: $viewModel.greenButtonOverride)
-                            Text("Hold any modifier key or use the window menu for default macOS behavior")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
                     }
                     .padding(.top, 4)
                     .padding(.leading, 12)
@@ -317,7 +382,7 @@ struct BehaviorSettingsView: View {
                                     Spacer()
                                     MASShortcutViewRepresentable(
                                         defaultsKey: TodoManager.toggleDefaultsKey,
-                                        validator: TodoShortcutValidator(defaultsKey: TodoManager.toggleDefaultsKey),
+                                        validator: viewModel.allowAnyShortcut ? PassthroughShortcutValidator() : MASShortcutValidator.standardRectangleValidator(),
                                         recordingObserver: viewModel.shortcutRecordingObserver
                                     )
                                     .frame(width: 130, height: 22)
@@ -328,7 +393,7 @@ struct BehaviorSettingsView: View {
                                     Spacer()
                                     MASShortcutViewRepresentable(
                                         defaultsKey: TodoManager.reflowDefaultsKey,
-                                        validator: TodoShortcutValidator(defaultsKey: TodoManager.reflowDefaultsKey),
+                                        validator: viewModel.allowAnyShortcut ? PassthroughShortcutValidator() : MASShortcutValidator.standardRectangleValidator(),
                                         recordingObserver: viewModel.shortcutRecordingObserver
                                     )
                                     .frame(width: 130, height: 22)
@@ -426,7 +491,7 @@ struct BehaviorSettingsView: View {
     private func windowActionShortcutView(_ action: WindowAction) -> some View {
         MASShortcutViewRepresentable(
             defaultsKey: action.name,
-            validator: viewModel.allowAnyShortcut ? PassthroughShortcutValidator() : MASShortcutValidator(),
+            validator: viewModel.allowAnyShortcut ? PassthroughShortcutValidator() : MASShortcutValidator.standardRectangleValidator(),
             recordingObserver: viewModel.shortcutRecordingObserver,
             recordsMouseButtons: true
         )

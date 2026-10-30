@@ -8,6 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		01f52cab9bce43359775bdd7 /* JSONDefaultTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = de0950b8b00f40308934a523 /* JSONDefaultTests.swift */; };
+		AA49DD3129B8C1B100690E13 /* GreenButtonGridGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA49DD3029B8C1B100690E13 /* GreenButtonGridGeometry.swift */; };
+		AA49DD3329B8C1B100690E13 /* GreenButtonGridPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA49DD3229B8C1B100690E13 /* GreenButtonGridPanel.swift */; };
+		AA49DD3529B8C1B100690E13 /* GreenButtonGridTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA49DD3429B8C1B100690E13 /* GreenButtonGridTests.swift */; };
+		AA49DD3929B8C1B100690E13 /* GitHubSoftwareUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA49DD3829B8C1B100690E13 /* GitHubSoftwareUpdater.swift */; };
 		0242FE5DB7F0688BA9A854FE /* WindowAnimationResizePause.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A8273BC2FCCC192ACD2504A /* WindowAnimationResizePause.swift */; };
 		02B3B60835148B7601576BB0 /* SnapEdgeDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1309CF4C12824A3BC50A6481 /* SnapEdgeDetection.swift */; };
 		05DBEA44B55E6F8C5FC3D6E0 /* MiddleLeftTwelfthCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEABF10E66D648DDB37DABBA /* MiddleLeftTwelfthCalculation.swift */; };
@@ -483,6 +487,10 @@
 		FDE8FCDF27C2950400EACCAA /* MultiWindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiWindowManager.swift; sourceTree = "<group>"; };
 		FEE147786B2CD7350FAFB700 /* BottomLeftSixteenthCalculation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomLeftSixteenthCalculation.swift; sourceTree = "<group>"; };
 		de0950b8b00f40308934a523 /* JSONDefaultTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONDefaultTests.swift; sourceTree = "<group>"; };
+		AA49DD3029B8C1B100690E13 /* GreenButtonGridGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreenButtonGridGeometry.swift; sourceTree = "<group>"; };
+		AA49DD3229B8C1B100690E13 /* GreenButtonGridPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreenButtonGridPanel.swift; sourceTree = "<group>"; };
+		AA49DD3429B8C1B100690E13 /* GreenButtonGridTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreenButtonGridTests.swift; sourceTree = "<group>"; };
+		AA49DD3829B8C1B100690E13 /* GitHubSoftwareUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubSoftwareUpdater.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -756,6 +764,8 @@
 				982470422EFA00010037B409 /* WindowManager+CooperativeCornerResize.swift */,
 				AA49DD1029B8C1B100690E13 /* TitleBarManager.swift */,
 				AA49DD2029B8C1B100690E13 /* GreenButtonManager.swift */,
+				AA49DD3829B8C1B100690E13 /* GitHubSoftwareUpdater.swift */,
+				AA49DD3629B8C1B100690E13 /* GreenButton */,
 				98987AA62391890C00BE72C4 /* Logging */,
 				98ED704D306179160077BD10 /* SettingsWindow */,
 				989DA30C243FC0C3008C7AA4 /* WelcomeWindow */,
@@ -781,9 +791,19 @@
 				AF09B1000000000000000004 /* DisplayTransferTests.swift */,
 				944F25D02CE5A144004B2FD2 /* ShortcutRecordingObserverTests.swift */,
 				de0950b8b00f40308934a523 /* JSONDefaultTests.swift */,
+				AA49DD3429B8C1B100690E13 /* GreenButtonGridTests.swift */,
 				9824702122AF9B7E0037B409 /* Info.plist */,
 			);
 			path = RectangleTests;
+			sourceTree = "<group>";
+		};
+		AA49DD3629B8C1B100690E13 /* GreenButton */ = {
+			isa = PBXGroup;
+			children = (
+				AA49DD3029B8C1B100690E13 /* GreenButtonGridGeometry.swift */,
+				AA49DD3229B8C1B100690E13 /* GreenButtonGridPanel.swift */,
+			);
+			path = GreenButton;
 			sourceTree = "<group>";
 		};
 		985B9BFA22BE218C00A2E8F0 /* Popover */ = {
@@ -1183,6 +1203,9 @@
 				AA69F83C29909A95001A81AF /* RightTodoCalculation.swift in Sources */,
 				AA49DD1129B8C1B100690E13 /* TitleBarManager.swift in Sources */,
 				AA49DD2129B8C1B100690E13 /* GreenButtonManager.swift in Sources */,
+				AA49DD3129B8C1B100690E13 /* GreenButtonGridGeometry.swift in Sources */,
+				AA49DD3329B8C1B100690E13 /* GreenButtonGridPanel.swift in Sources */,
+				AA49DD3929B8C1B100690E13 /* GitHubSoftwareUpdater.swift in Sources */,
 				9824700D22AF9B7D0037B409 /* AppDelegate.swift in Sources */,
 				98ED703A305DB1180077BD10 /* BehaviorSettingsView.swift in Sources */,
 				98A009BF251253AB00CFBF0C /* BottomRightSixthCalculation.swift in Sources */,
@@ -1269,6 +1292,7 @@
 				AF09B1000000000000000003 /* DisplayTransferTests.swift in Sources */,
 				944F25D12CE5A144004B2FD2 /* ShortcutRecordingObserverTests.swift in Sources */,
 				01f52cab9bce43359775bdd7 /* JSONDefaultTests.swift in Sources */,
+				AA49DD3529B8C1B100690E13 /* GreenButtonGridTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

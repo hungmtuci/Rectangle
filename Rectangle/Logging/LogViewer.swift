@@ -44,15 +44,67 @@ class LogWindowController: NSWindowController, NSWindowDelegate {
 extension LogWindowController {
     // MARK: Storyboard instantiation
     static func freshController() -> LogWindowController {
-        let storyboard = NSStoryboard(name: "LogViewer", bundle: nil)
-        let identifier = "LogWindowController"
-        guard let windowController = storyboard.instantiateController(withIdentifier: identifier) as? LogWindowController else {
-            fatalError("Unable to find WindowController")
+        if Bundle.main.path(forResource: "LogViewer", ofType: "storyboardc") != nil {
+            let storyboard = NSStoryboard(name: "LogViewer", bundle: nil)
+            let identifier = "LogWindowController"
+            if let windowController = storyboard.instantiateController(withIdentifier: identifier) as? LogWindowController {
+                windowController.window?.delegate = windowController
+                return windowController
+            }
         }
-        
-        windowController.window?.delegate = windowController
-        
-        return windowController
+        return makeProgrammaticController()
+    }
+
+    private static func makeProgrammaticController() -> LogWindowController {
+        let logVC = LogViewController()
+        let rootView = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 360))
+
+        let scrollView = NSScrollView(frame: rootView.bounds)
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = true
+
+        let textView = KeyDownTextView(frame: scrollView.bounds)
+        textView.autoresizingMask = [.width]
+        textView.isEditable = false
+        textView.isRichText = true
+        textView.textContainer?.widthTracksTextView = true
+        scrollView.documentView = textView
+
+        let clearButton = NSButton(title: String(localized: "Clear"), target: nil, action: #selector(clearClicked(_:)))
+        clearButton.bezelStyle = .rounded
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(scrollView)
+        rootView.addSubview(clearButton)
+
+        NSLayoutConstraint.activate([
+            clearButton.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 8),
+            clearButton.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -12),
+            scrollView.topAnchor.constraint(equalTo: clearButton.bottomAnchor, constant: 8),
+            scrollView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor)
+        ])
+
+        logVC.view = rootView
+        logVC.textView = textView
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 360),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Rectangle Log"
+        window.contentViewController = logVC
+        window.center()
+
+        let controller = LogWindowController(window: window)
+        clearButton.target = controller
+        window.delegate = controller
+        return controller
     }
 }
 

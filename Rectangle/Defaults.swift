@@ -133,6 +133,15 @@ class Defaults {
     static let screensOrderedByX = IntEnumDefault<ScreenOrdering>(key: "screensOrderedByX", defaultValue: .yThenMinX)
     static let combinedDisplayMode = OptionalBoolDefault(key: "combinedDisplayMode")
     static let greenButtonOverride = BoolDefault(key: "greenButtonOverride")
+    static let greenButtonHoverGrid = OptionalBoolDefault(key: "greenButtonHoverGrid")
+    static let greenButtonGridColumns = PositiveIntDefault(key: "greenButtonGridColumns", defaultValue: 6)
+    static let greenButtonGridRows = PositiveIntDefault(key: "greenButtonGridRows", defaultValue: 4)
+    static var isGreenButtonClickMaximizeEnabled: Bool {
+        if UserDefaults.standard.object(forKey: greenButtonOverride.key) == nil {
+            return true
+        }
+        return greenButtonOverride.enabled
+    }
     static let mouseButtonShortcutsUseWindowUnderCursor = BoolDefault(key: "mouseButtonShortcutsUseWindowUnderCursor")
     static let wasWelcomeDisplayed = BoolDefault(key: "wasWelcomeDisplayed")
     static var array: [Default] = [
@@ -243,6 +252,9 @@ class Defaults {
         stackSameSizeOnly,
         moveFixedSizeToEdge,
         greenButtonOverride,
+        greenButtonHoverGrid,
+        greenButtonGridColumns,
+        greenButtonGridRows,
         mouseButtonShortcutsUseWindowUnderCursor
     ]
 }

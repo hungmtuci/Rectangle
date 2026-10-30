@@ -26,6 +26,11 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         window.minSize = minSize
         window.center()
+
+        let updateAccessory = NSTitlebarAccessoryViewController()
+        updateAccessory.view = NSHostingView(rootView: SettingsGitHubUpdateAccessoryView())
+        updateAccessory.layoutAttribute = .right
+        window.addTitlebarAccessoryViewController(updateAccessory)
         
         self.init(window: window)
         window.delegate = self

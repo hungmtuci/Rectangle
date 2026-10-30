@@ -324,7 +324,7 @@ struct AppShortcutConflict {
             return AppShortcutConflict(shortcutName: action.displayName ?? action.name)
         }
 
-        let appShortcutDefaultsKeys = TodoManager.defaultsKeys + StackBadgeManager.defaultsKeys
+        let appShortcutDefaultsKeys = TodoManager.defaultsKeys + StackBadgeManager.defaultsKeys + GreenButtonManager.defaultsKeys
         for defaultsKey in appShortcutDefaultsKeys where defaultsKey != ignoredDefaultsKey {
             guard let appShortcut = ShortcutCycle.shortcut(forDefaultsKey: defaultsKey, userDefaults: userDefaults),
                   ShortcutCycle.ShortcutIdentity(appShortcut) == identity
@@ -336,7 +336,7 @@ struct AppShortcutConflict {
         return nil
     }
 
-    private static func displayName(forDefaultsKey defaultsKey: String) -> String {
+    static func displayName(forDefaultsKey defaultsKey: String) -> String {
         switch defaultsKey {
         case TodoManager.toggleDefaultsKey:
             return String(localized: "Toggle Todo")
@@ -344,6 +344,8 @@ struct AppShortcutConflict {
             return String(localized: "Reflow Todo")
         case StackBadgeManager.toggleDefaultsKey:
             return String(localized: "Toggle stacked window badge")
+        case GreenButtonManager.toggleGridDefaultsKey:
+            return String(localized: "Open layout grid shortcut")
         default:
             return defaultsKey
         }
@@ -359,6 +361,8 @@ class AppShortcutValidator: MASShortcutValidator {
         self.defaultsKey = defaultsKey
         self.userDefaults = userDefaults
         super.init()
+        allowAnyShortcutWithOptionModifier = true
+        allowOverridingServicesShortcut = true
     }
 
     override func isShortcutValid(_ shortcut: MASShortcut!) -> Bool {

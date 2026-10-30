@@ -291,6 +291,9 @@ class SnappingManager {
     }
     
     func handle(event: NSEvent) {
+        if GreenButtonManager.isPopoverActive {
+            return
+        }
         switch event.type {
         case .keyDown:
             if box?.waitingForPlacement == true { box?.orderOut(nil) }

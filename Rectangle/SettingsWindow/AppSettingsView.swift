@@ -27,6 +27,7 @@ class AppSettingsViewController: NSViewController {
 
 struct AppSettingsView: View {
     @State private var viewModel = AppSettingsViewModel()
+    @State private var updater = GitHubSoftwareUpdater.shared
 
     var body: some View {
         Form {
@@ -43,16 +44,51 @@ struct AppSettingsView: View {
             }
             
             Section {
-                HStack {
-                    Button(viewModel.hasPendingUpdate ? "Update Available…" : "Check for Updates…") {
-                        viewModel.checkForUpdates()
+                HStack(spacing: 10) {
+                    if let newTag = updater.availableReleaseTag {
+                        Button {
+                            updater.checkForUpdates()
+                        } label: {
+                            Label("Cập nhật qua GitHub (\(newTag))…", systemImage: "arrow.down.circle.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(updater.isInstallingUpdate)
+                    } else {
+                        Button {
+                            updater.checkForUpdates()
+                        } label: {
+                            Label("Cập nhật qua GitHub…", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .disabled(updater.isChecking || updater.isInstallingUpdate)
                     }
+
+                    if updater.isChecking {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+
                     Spacer()
+
                     Text(viewModel.versionString)
                         .foregroundColor(.secondary)
-                        .font(.callout)
+                        .font(.callout.monospacedDigit())
                 }
-                Toggle("Check for updates automatically", isOn: $viewModel.checkForUpdatesAutomatically)
+
+                if !updater.statusMessage.isEmpty {
+                    Text(updater.statusMessage)
+                        .font(.caption)
+                        .foregroundColor(updater.availableReleaseTag != nil ? .accentColor : .secondary)
+                }
+
+                Toggle("Check for updates automatically", isOn: $updater.automaticallyChecksForUpdates)
+
+                HStack(spacing: 14) {
+                    Link("GitHub Releases ↗", destination: GitHubSoftwareUpdater.releasesPageURL)
+                        .font(.caption)
+                    Link("Mã nguồn GitHub (hungmtuci/Rectangle) ↗", destination: GitHubSoftwareUpdater.repoHomeURL)
+                        .font(.caption)
+                    Spacer()
+                }
             }
 
             Section {

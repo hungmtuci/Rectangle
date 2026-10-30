@@ -22,7 +22,10 @@ final class AppSettingsViewModel {
 
      var checkForUpdatesAutomatically: Bool {
         didSet {
-            AppDelegate.instance.updaterController?.updater.automaticallyChecksForUpdates = checkForUpdatesAutomatically
+            Defaults.SUEnableAutomaticChecks.enabled = checkForUpdatesAutomatically
+            Task { @MainActor in
+                GitHubSoftwareUpdater.shared.automaticallyChecksForUpdates = checkForUpdatesAutomatically
+            }
         }
     }
 
@@ -40,12 +43,14 @@ final class AppSettingsViewModel {
     init() {
         self.launchOnLogin = Defaults.launchOnLogin.enabled
         self.hideMenuBarIcon = Defaults.hideMenuBarIcon.enabled
-        self.checkForUpdatesAutomatically = AppDelegate.instance.updaterController?.updater.automaticallyChecksForUpdates ?? false
+        self.checkForUpdatesAutomatically = UserDefaults.standard.object(forKey: Defaults.SUEnableAutomaticChecks.key) == nil
+            ? true
+            : Defaults.SUEnableAutomaticChecks.enabled
         self.hasPendingUpdate = AppDelegate.instance.hasPendingUpdate
         self.allowAnyShortcut = Defaults.allowAnyShortcut.enabled
 
-        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "2.1.0-custom"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "112"
         self.versionString = "v\(appVersion) (\(build))"
 
         setupObservers()
@@ -71,8 +76,9 @@ final class AppSettingsViewModel {
         self.allowAnyShortcut = Defaults.allowAnyShortcut.enabled
     }
 
+    @MainActor
     func checkForUpdates() {
-        AppDelegate.instance.updaterController?.checkForUpdates(nil)
+        GitHubSoftwareUpdater.shared.checkForUpdates()
     }
 
     func restoreDefaults() {

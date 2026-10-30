@@ -191,7 +191,7 @@ final class ShortcutActionCellView: NSTableCellView {
         if Defaults.allowAnyShortcut.enabled {
             shortcutView.shortcutValidator = PassthroughShortcutValidator()
         } else {
-            shortcutView.shortcutValidator = MASShortcutValidator()
+            shortcutView.shortcutValidator = MASShortcutValidator.standardRectangleValidator()
         }
         
         shortcutView.associatedUserDefaultsKey = nil
@@ -231,6 +231,7 @@ class ShortcutsViewController: NSViewController {
     private let outlineView = InsetOutlineView()
     private let shortcutRecordingObserver = ShortcutRecordingObserver()
     private var allowAnyShortcutObserver: NSObjectProtocol?
+    private var shortcutsUpdatedObserver: NSObjectProtocol?
     private var lastGroupToggleTime: TimeInterval = 0
     
     private var rootItems: [CategoryGroup] = []
@@ -337,6 +338,9 @@ class ShortcutsViewController: NSViewController {
         if let observer = allowAnyShortcutObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let observer = shortcutsUpdatedObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
     
     private func subscribeToAllowAnyShortcutToggle() {
@@ -344,6 +348,16 @@ class ShortcutsViewController: NSViewController {
             guard let self = self else { return }
             self.outlineView.reloadData()
             self.outlineView.expandItem(nil, expandChildren: true)
+        }
+        shortcutsUpdatedObserver = Notification.Name.shortcutsUpdatedInternally.onPost { [weak self] _ in
+            guard let self else { return }
+            for row in 0..<self.outlineView.numberOfRows {
+                guard let shortcutItem = self.outlineView.item(atRow: row) as? ShortcutItem,
+                      let cell = self.outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ShortcutActionCellView,
+                      !cell.shortcutView.isRecording
+                else { continue }
+                cell.configure(with: shortcutItem.action, recordingObserver: self.shortcutRecordingObserver)
+            }
         }
     }
 }
@@ -476,4 +490,13 @@ class PassthroughShortcutValidator: MASShortcutValidator {
         return false
     }
     
+}
+
+extension MASShortcutValidator {
+    static func standardRectangleValidator() -> MASShortcutValidator {
+        let validator = MASShortcutValidator()
+        validator.allowAnyShortcutWithOptionModifier = true
+        validator.allowOverridingServicesShortcut = true
+        return validator
+    }
 }
