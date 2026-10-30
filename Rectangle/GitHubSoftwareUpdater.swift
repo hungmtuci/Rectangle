@@ -107,11 +107,11 @@ final class GitHubSoftwareUpdater {
     }
 
     var currentVersionString: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "2.1.0-custom"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "2.1.1-custom"
     }
 
     var currentBuildString: String {
-        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "112"
+        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "113"
     }
 
     func openRepositoryPage() {

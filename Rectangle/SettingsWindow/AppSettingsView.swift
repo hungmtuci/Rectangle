@@ -27,13 +27,15 @@ class AppSettingsViewController: NSViewController {
 
 struct AppSettingsView: View {
     @State private var viewModel = AppSettingsViewModel()
+    @State private var startup = StartupPreferencesManager.shared
     @State private var updater = GitHubSoftwareUpdater.shared
 
     var body: some View {
         Form {
             // MARK: - App & Updates
             Section {
-                Toggle("Launch on login", isOn: $viewModel.launchOnLogin)
+                Toggle("Khởi động cùng macOS (Launch on login)", isOn: $startup.launchOnLogin)
+                Toggle("Bật bảng này khi khởi động", isOn: $startup.showSettingsOnLaunch)
                 Toggle("Hide menu bar icon", isOn: $viewModel.hideMenuBarIcon)
 
                 if viewModel.hideMenuBarIcon {

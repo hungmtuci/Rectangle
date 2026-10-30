@@ -4,6 +4,7 @@ import Cocoa
 
 class Defaults {
     static let launchOnLogin = BoolDefault(key: "launchOnLogin")
+    static let showSettingsOnLaunch = BoolDefault(key: "showSettingsOnLaunch")
     static let disabledApps = JSONDefault<Set<String>>(key: "disabledApps")
     static let hideMenuBarIcon = BoolDefault(key: "hideMenubarIcon")
     static let alternateDefaultShortcuts = BoolDefault(key: "alternateDefaultShortcuts") // switch to magnet defaults
@@ -146,6 +147,7 @@ class Defaults {
     static let wasWelcomeDisplayed = BoolDefault(key: "wasWelcomeDisplayed")
     static var array: [Default] = [
         launchOnLogin,
+        showSettingsOnLaunch,
         disabledApps,
         hideMenuBarIcon,
         alternateDefaultShortcuts,

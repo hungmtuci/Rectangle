@@ -10,6 +10,9 @@ final class AppSettingsViewModel {
         didSet {
             LaunchOnLogin.isEnabled = launchOnLogin
             Defaults.launchOnLogin.enabled = launchOnLogin
+            Task { @MainActor in
+                StartupPreferencesManager.shared.refreshFromSystem()
+            }
         }
     }
 

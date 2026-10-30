@@ -41,6 +41,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @IBOutlet weak var viewLoggingMenuItem: NSMenuItem!
     @IBOutlet weak var updatesMenuItem: NSMenuItem!
     @IBOutlet weak var quitMenuItem: NSMenuItem!
+    weak var launchOnLoginMenuItem: NSMenuItem?
+    weak var showSettingsOnLaunchMenuItem: NSMenuItem?
     
     static var instance: AppDelegate {
         NSApp.delegate as! AppDelegate
@@ -80,6 +82,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         if alreadyTrusted {
             accessibilityTrusted()
+            if Defaults.showSettingsOnLaunch.enabled {
+                DispatchQueue.main.async {
+                    self.openPreferences(self)
+                }
+            }
         }
         
         statusItem.statusMenu = alreadyTrusted
@@ -143,6 +150,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             switch item.action {
             case #selector(openPreferences):
                 item.image = NSImage(systemSymbolName: "gear", accessibilityDescription: nil)
+            case #selector(toggleLaunchOnLoginMenuItem):
+                item.image = NSImage(systemSymbolName: "power.circle", accessibilityDescription: nil)
+            case #selector(toggleShowSettingsOnLaunchMenuItem):
+                item.image = NSImage(systemSymbolName: "macwindow.badge.plus", accessibilityDescription: nil)
             case #selector(viewLogging):
                 item.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
             case #selector(checkForUpdates):
@@ -328,10 +339,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         accessibilityAuthorization.showAuthorizationWindow()
     }
 
+    @MainActor
+    @objc func toggleLaunchOnLoginMenuItem(_ sender: NSMenuItem) {
+        StartupPreferencesManager.shared.launchOnLogin.toggle()
+        syncStartupMenuItems()
+    }
+
+    @MainActor
+    @objc func toggleShowSettingsOnLaunchMenuItem(_ sender: NSMenuItem) {
+        StartupPreferencesManager.shared.showSettingsOnLaunch.toggle()
+        syncStartupMenuItems()
+    }
+
+    @MainActor
+    func syncStartupMenuItems() {
+        let prefs = StartupPreferencesManager.shared
+        prefs.refreshFromSystem()
+        launchOnLoginMenuItem?.state = prefs.launchOnLogin ? .on : .off
+        showSettingsOnLaunchMenuItem?.state = prefs.showSettingsOnLaunch ? .on : .off
+    }
+
+    @MainActor
     private func checkLaunchOnLogin() {
-        if Defaults.launchOnLogin.enabled, !LaunchOnLogin.isEnabled {
-            LaunchOnLogin.isEnabled = true
-        }
+        StartupPreferencesManager.shared.syncOnAppLaunch()
     }
     
 }
@@ -357,6 +387,7 @@ extension AppDelegate: NSMenuDelegate {
         updateWindowActionMenuItems(menu: menu)
         updateTodoModeMenuItems(menu: menu)
         Task { @MainActor [weak self] in
+            self?.syncStartupMenuItems()
             self?.syncUpdateMenuItemTitle()
         }
 
@@ -778,6 +809,15 @@ extension AppDelegate {
         settingsItem.target = self
         statusMenu.addItem(settingsItem)
 
+        let launchAtLoginItem = NSMenuItem(title: "Khởi động cùng macOS", action: #selector(toggleLaunchOnLoginMenuItem(_:)), keyEquivalent: "")
+        launchAtLoginItem.target = self
+        statusMenu.addItem(launchAtLoginItem)
+
+        let showOnLaunchItem = NSMenuItem(title: "Bật bảng cài đặt khi khởi động", action: #selector(toggleShowSettingsOnLaunchMenuItem(_:)), keyEquivalent: "")
+        showOnLaunchItem.target = self
+        statusMenu.addItem(showOnLaunchItem)
+        statusMenu.addItem(.separator())
+
         let aboutItem = NSMenuItem(title: String(localized: "About"), action: #selector(showAbout(_:)), keyEquivalent: "")
         aboutItem.target = self
         statusMenu.addItem(aboutItem)
@@ -823,6 +863,8 @@ extension AppDelegate {
         viewLoggingMenuItem = loggingItem
         updatesMenuItem = updatesItem
         quitMenuItem = quitItem
+        launchOnLoginMenuItem = launchAtLoginItem
+        showSettingsOnLaunchMenuItem = showOnLaunchItem
     }
 
     private func terminateOtherRunningInstances() {

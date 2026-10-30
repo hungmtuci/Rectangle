@@ -15,9 +15,19 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         
         let initialTab = SettingsTabViewController.currentTab
         window.title = initialTab.label
-        let minSize = NSSize(width: 500, height: 350)
+        let updateAccessory = NSTitlebarAccessoryViewController()
+        updateAccessory.view = NSHostingView(rootView: SettingsGitHubUpdateAccessoryView())
+        updateAccessory.layoutAttribute = .right
+        window.addTitlebarAccessoryViewController(updateAccessory)
+
+        let startupBarAccessory = NSTitlebarAccessoryViewController()
+        startupBarAccessory.view = NSHostingView(rootView: SettingsStartupOptionsBarView())
+        startupBarAccessory.layoutAttribute = .bottom
+        window.addTitlebarAccessoryViewController(startupBarAccessory)
+
+        let minSize = NSSize(width: 500, height: 390)
         if let savedWindowSize = initialTab.savedWindowSize {
-            contentViewController.resizeWindow(toFrameSize: savedWindowSize, animated: false)
+            window.setFrame(NSRect(origin: window.frame.origin, size: savedWindowSize), display: false)
         } else {
             let initialSize = initialTab.defaultSize
             ?? contentViewController.tabViewItems[initialTab.rawValue].viewController?.view.fittingSize
@@ -26,11 +36,6 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         window.minSize = minSize
         window.center()
-
-        let updateAccessory = NSTitlebarAccessoryViewController()
-        updateAccessory.view = NSHostingView(rootView: SettingsGitHubUpdateAccessoryView())
-        updateAccessory.layoutAttribute = .right
-        window.addTitlebarAccessoryViewController(updateAccessory)
         
         self.init(window: window)
         window.delegate = self

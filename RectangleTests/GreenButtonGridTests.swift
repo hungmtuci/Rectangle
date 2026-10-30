@@ -367,6 +367,21 @@ final class GreenButtonGridTests: XCTestCase {
         XCTAssertTrue(GitHubSoftwareUpdater.isRemoteVersionNewer("v2.1.1-custom", than: "2.1.0-custom"))
         XCTAssertTrue(GitHubSoftwareUpdater.isRemoteVersionNewer("v2.2.0", than: "2.1.0-custom"))
     }
+
+    @MainActor
+    func testStartupPreferencesPersistenceAndSync() {
+        let originalShow = Defaults.showSettingsOnLaunch.enabled
+        defer {
+            Defaults.showSettingsOnLaunch.enabled = originalShow
+            StartupPreferencesManager.shared.refreshFromSystem()
+        }
+
+        let prefs = StartupPreferencesManager.shared
+        prefs.showSettingsOnLaunch = true
+        XCTAssertTrue(Defaults.showSettingsOnLaunch.enabled)
+        prefs.showSettingsOnLaunch = false
+        XCTAssertFalse(Defaults.showSettingsOnLaunch.enabled)
+    }
 }
 
 #elseif canImport(Testing)
@@ -683,6 +698,20 @@ struct GreenButtonGridTests {
         #expect(!GitHubSoftwareUpdater.isRemoteVersionNewer("v2.0.4", than: "2.1.0-custom"))
         #expect(GitHubSoftwareUpdater.isRemoteVersionNewer("v2.1.1-custom", than: "2.1.0-custom"))
         #expect(GitHubSoftwareUpdater.isRemoteVersionNewer("v2.2.0", than: "2.1.0-custom"))
+    }
+
+    @Test @MainActor func startupPreferencesPersistenceAndSync() {
+        let originalShow = Defaults.showSettingsOnLaunch.enabled
+        defer {
+            Defaults.showSettingsOnLaunch.enabled = originalShow
+            StartupPreferencesManager.shared.refreshFromSystem()
+        }
+
+        let prefs = StartupPreferencesManager.shared
+        prefs.showSettingsOnLaunch = true
+        #expect(Defaults.showSettingsOnLaunch.enabled)
+        prefs.showSettingsOnLaunch = false
+        #expect(!Defaults.showSettingsOnLaunch.enabled)
     }
 }
 #endif
