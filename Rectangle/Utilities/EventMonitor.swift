@@ -55,7 +55,7 @@ public class ActiveEventMonitor: EventMonitor {
     private var thread: RunLoopThread?
     private let mask: NSEvent.EventTypeMask
     public let filterer: (NSEvent) -> Bool
-    public let handler: (NSEvent) -> Void
+    public let handler: ((NSEvent) -> Void)?
 
     var running: Bool {
         lock.lock()
@@ -63,7 +63,7 @@ public class ActiveEventMonitor: EventMonitor {
         return tap != nil
     }
 
-    public init(mask: NSEvent.EventTypeMask, filterer: @escaping (NSEvent) -> Bool, handler: @escaping (NSEvent) -> Void) {
+    public init(mask: NSEvent.EventTypeMask, filterer: @escaping (NSEvent) -> Bool, handler: ((NSEvent) -> Void)? = nil) {
         self.mask = mask
         self.filterer = filterer
         self.handler = handler
@@ -130,7 +130,9 @@ fileprivate func tapCallback(proxy: CGEventTapProxy, type: CGEventType, event: C
         } else {
             if let nsEvent = NSEvent(cgEvent: event) {
                 filtered = eventMonitor.filterer(nsEvent)
-                DispatchQueue.main.async { eventMonitor.handler(nsEvent) }
+                if let handler = eventMonitor.handler {
+                    DispatchQueue.main.async { handler(nsEvent) }
+                }
             }
         }
     }

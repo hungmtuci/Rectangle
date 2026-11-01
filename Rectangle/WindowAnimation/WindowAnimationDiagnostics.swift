@@ -8,10 +8,10 @@ enum WindowAnimationDiagnostics {
     private static let path = ProcessInfo.processInfo.environment["RECTANGLE_ANIMATION_TRACE_PATH"]
     static var enabled: Bool { !(path ?? "").isEmpty }
     private static let queue = DispatchQueue(label: "Rectangle.WindowAnimation.diagnostics", qos: .utility)
-    static func event(_ name: String, fields: [String: Any] = [:]) {
+    static func event(_ name: @autoclosure () -> String, fields: @autoclosure () -> [String: Any] = [:]) {
         guard let path, !path.isEmpty else { return }
-        var record = fields
-        record["event"] = name
+        var record = fields()
+        record["event"] = name()
         record["uptime"] = ProcessInfo.processInfo.systemUptime
         record["timestamp"] = Date().timeIntervalSince1970
         record["pid"] = getpid()

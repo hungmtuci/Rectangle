@@ -210,6 +210,13 @@ final class BehaviorSettingsViewModel {
     var stageCapable: Bool { StageUtil.stageCapable }
     
     private var aboutTodoWindowController: NSWindowController?
+    private var notificationObservers: [NSObjectProtocol] = []
+
+    deinit {
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
     
     // MARK: - Initialization
     init() {
@@ -268,19 +275,19 @@ final class BehaviorSettingsViewModel {
     }
     
     private func setupObservers() {
-        Notification.Name.configImported.onPost { [weak self] _ in
+        notificationObservers.append(Notification.Name.configImported.onPost { [weak self] _ in
             self?.reloadFromDefaults()
-        }
-        Notification.Name.stackBadgeChanged.onPost { [weak self] _ in
+        })
+        notificationObservers.append(Notification.Name.stackBadgeChanged.onPost { [weak self] _ in
             guard let self else { return }
             if self.stackBadge != Defaults.stackBadge.userEnabled {
                 self.stackBadge = Defaults.stackBadge.userEnabled
             }
-        }
-        Notification.Name.allowAnyShortcut.onPost { [weak self] _ in
+        })
+        notificationObservers.append(Notification.Name.allowAnyShortcut.onPost { [weak self] _ in
             self?.allowAnyShortcut = Defaults.allowAnyShortcut.enabled
-        }
-        Notification.Name.greenButtonHoverGridChanged.onPost { [weak self] _ in
+        })
+        notificationObservers.append(Notification.Name.greenButtonHoverGridChanged.onPost { [weak self] _ in
             guard let self else { return }
             let dims = GridSelection.clampDimensions(
                 columns: Defaults.greenButtonGridColumns.value,
@@ -292,7 +299,7 @@ final class BehaviorSettingsViewModel {
             if self.greenButtonGridRows != dims.rows {
                 self.greenButtonGridRows = dims.rows
             }
-        }
+        })
     }
     
     func reloadFromDefaults() {

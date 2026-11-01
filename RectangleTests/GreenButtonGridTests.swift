@@ -382,6 +382,37 @@ final class GreenButtonGridTests: XCTestCase {
         prefs.showSettingsOnLaunch = false
         XCTAssertFalse(Defaults.showSettingsOnLaunch.enabled)
     }
+
+    @MainActor
+    func testOptimizationsDiagnosticsAndViewModelObserverDeinit() {
+        if !WindowAnimationDiagnostics.enabled {
+            var didEvaluateFields = false
+            WindowAnimationDiagnostics.event(
+                { () -> String in
+                    didEvaluateFields = true
+                    return "unused-event"
+                }(),
+                fields: {
+                    didEvaluateFields = true
+                    return ["x": 1]
+                }()
+            )
+            XCTAssertFalse(didEvaluateFields)
+        }
+
+        weak var weakBehaviorVM: BehaviorSettingsViewModel?
+        weak var weakAppVM: AppSettingsViewModel?
+        autoreleasepool {
+            let bvm = BehaviorSettingsViewModel()
+            let avm = AppSettingsViewModel()
+            weakBehaviorVM = bvm
+            weakAppVM = avm
+            Notification.Name.greenButtonHoverGridChanged.post()
+            Notification.Name.allowAnyShortcut.post(object: true)
+        }
+        XCTAssertNil(weakBehaviorVM)
+        XCTAssertNil(weakAppVM)
+    }
 }
 
 #elseif canImport(Testing)
@@ -712,6 +743,36 @@ struct GreenButtonGridTests {
         #expect(Defaults.showSettingsOnLaunch.enabled)
         prefs.showSettingsOnLaunch = false
         #expect(!Defaults.showSettingsOnLaunch.enabled)
+    }
+
+    @Test @MainActor func optimizationsDiagnosticsAndViewModelObserverDeinit() {
+        if !WindowAnimationDiagnostics.enabled {
+            var didEvaluateFields = false
+            WindowAnimationDiagnostics.event(
+                { () -> String in
+                    didEvaluateFields = true
+                    return "unused-event"
+                }(),
+                fields: {
+                    didEvaluateFields = true
+                    return ["x": 1]
+                }()
+            )
+            #expect(!didEvaluateFields)
+        }
+
+        weak var weakBehaviorVM: BehaviorSettingsViewModel?
+        weak var weakAppVM: AppSettingsViewModel?
+        autoreleasepool {
+            let bvm = BehaviorSettingsViewModel()
+            let avm = AppSettingsViewModel()
+            weakBehaviorVM = bvm
+            weakAppVM = avm
+            Notification.Name.greenButtonHoverGridChanged.post()
+            Notification.Name.allowAnyShortcut.post(object: true)
+        }
+        #expect(weakBehaviorVM == nil)
+        #expect(weakAppVM == nil)
     }
 }
 #endif

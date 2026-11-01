@@ -135,7 +135,7 @@ final class MouseButtonShortcutMonitor: MouseButtonBindingStore {
     }
 
     init(makeEventMonitor: @escaping EventMonitorFactory = { filterer in
-        ActiveEventMonitor(mask: [.otherMouseDown, .otherMouseDragged, .otherMouseUp], filterer: filterer, handler: { _ in })
+        ActiveEventMonitor(mask: [.otherMouseDown, .otherMouseDragged, .otherMouseUp], filterer: filterer)
     }) {
         self.makeEventMonitor = makeEventMonitor
     }

@@ -374,17 +374,19 @@ class WindowManager {
         
         recordAction(windowId: result.windowId, resultingRect: resultingRect, action: calcResult.resultingAction, subAction: calcResult.resultingSubAction, incrementCount: incrementCount)
 
-        let requestedRect = calcResult.rect.screenFlipped
-        var evidence: [String: Any] = ["action": calcResult.resultingAction.name,
-                                      "achieved": [resultingRect.minX, resultingRect.minY, resultingRect.width, resultingRect.height],
-                                      "requested": [requestedRect.minX, requestedRect.minY, requestedRect.width, requestedRect.height]]
-        if let windowId = result.windowId {
-            evidence["windowID"] = windowId
-            if let restore = AppDelegate.windowHistory.restoreRects[windowId] {
-                evidence["restore"] = [restore.minX, restore.minY, restore.width, restore.height]
+        if WindowAnimationDiagnostics.enabled {
+            let requestedRect = calcResult.rect.screenFlipped
+            var evidence: [String: Any] = ["action": calcResult.resultingAction.name,
+                                          "achieved": [resultingRect.minX, resultingRect.minY, resultingRect.width, resultingRect.height],
+                                          "requested": [requestedRect.minX, requestedRect.minY, requestedRect.width, requestedRect.height]]
+            if let windowId = result.windowId {
+                evidence["windowID"] = windowId
+                if let restore = AppDelegate.windowHistory.restoreRects[windowId] {
+                    evidence["restore"] = [restore.minX, restore.minY, restore.width, restore.height]
+                }
             }
+            WindowAnimationDiagnostics.event("window-action-achieved", fields: evidence)
         }
-        WindowAnimationDiagnostics.event("window-action-achieved", fields: evidence)
         Notification.Name.windowActionCompleted.post()
         
         if Logger.logging {

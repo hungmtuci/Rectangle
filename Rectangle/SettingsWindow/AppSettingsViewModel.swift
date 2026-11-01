@@ -6,75 +6,55 @@ import AppKit
 @Observable
 final class AppSettingsViewModel {
     // MARK: - General Settings
-     var launchOnLogin: Bool {
+    var hideMenuBarIcon: Bool {
         didSet {
-            LaunchOnLogin.isEnabled = launchOnLogin
-            Defaults.launchOnLogin.enabled = launchOnLogin
-            Task { @MainActor in
-                StartupPreferencesManager.shared.refreshFromSystem()
-            }
-        }
-    }
-
-     var hideMenuBarIcon: Bool {
-        didSet {
+            guard hideMenuBarIcon != oldValue else { return }
             Defaults.hideMenuBarIcon.enabled = hideMenuBarIcon
             RectangleStatusItem.instance.refreshVisibility()
         }
     }
 
-     var checkForUpdatesAutomatically: Bool {
-        didSet {
-            Defaults.SUEnableAutomaticChecks.enabled = checkForUpdatesAutomatically
-            Task { @MainActor in
-                GitHubSoftwareUpdater.shared.automaticallyChecksForUpdates = checkForUpdatesAutomatically
-            }
-        }
-    }
+    var versionString: String = ""
 
-     var hasPendingUpdate: Bool = false
-     var versionString: String = ""
-
-     var allowAnyShortcut: Bool {
+    var allowAnyShortcut: Bool {
         didSet {
+            guard allowAnyShortcut != oldValue else { return }
             Defaults.allowAnyShortcut.enabled = allowAnyShortcut
             Notification.Name.allowAnyShortcut.post(object: allowAnyShortcut)
         }
     }
 
+    private var notificationObservers: [NSObjectProtocol] = []
+
     // MARK: - Initialization
     init() {
-        self.launchOnLogin = Defaults.launchOnLogin.enabled
         self.hideMenuBarIcon = Defaults.hideMenuBarIcon.enabled
-        self.checkForUpdatesAutomatically = UserDefaults.standard.object(forKey: Defaults.SUEnableAutomaticChecks.key) == nil
-            ? true
-            : Defaults.SUEnableAutomaticChecks.enabled
-        self.hasPendingUpdate = AppDelegate.instance.hasPendingUpdate
         self.allowAnyShortcut = Defaults.allowAnyShortcut.enabled
 
-        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "2.1.0-custom"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "112"
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "2.1.2-custom"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "114"
         self.versionString = "v\(appVersion) (\(build))"
 
         setupObservers()
     }
 
-    private func setupObservers() {
-        Notification.Name.menuBarIconHidden.onPost { [weak self] _ in
-            self?.hideMenuBarIcon = true
-        }
-
-        Notification.Name.updateAvailability.onPost { [weak self] _ in
-            self?.hasPendingUpdate = AppDelegate.instance.hasPendingUpdate
-        }
-
-        Notification.Name.configImported.onPost { [weak self] _ in
-            self?.reloadFromDefaults()
+    deinit {
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
+    private func setupObservers() {
+        notificationObservers.append(Notification.Name.menuBarIconHidden.onPost { [weak self] _ in
+            self?.hideMenuBarIcon = true
+        })
+
+        notificationObservers.append(Notification.Name.configImported.onPost { [weak self] _ in
+            self?.reloadFromDefaults()
+        })
+    }
+
     func reloadFromDefaults() {
-        self.launchOnLogin = Defaults.launchOnLogin.enabled
         self.hideMenuBarIcon = Defaults.hideMenuBarIcon.enabled
         self.allowAnyShortcut = Defaults.allowAnyShortcut.enabled
     }

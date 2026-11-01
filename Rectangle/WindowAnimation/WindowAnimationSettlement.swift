@@ -238,15 +238,24 @@ struct WindowAnimationSettlement {
     }
 
     private static func matchesPixelRoundedFrame(_ actual: CGRect, target: CGRect) -> Bool {
-        let values = [actual.minX, actual.minY, actual.width, actual.height]
-        let targets = [target.minX, target.minY, target.width, target.height]
-        return [CGFloat(1), 0.5].contains { pixel in
-            zip(values, targets).allSatisfy { value, target in
-                abs(value - target) <= 0.001
-                    || (abs(value - target) <= pixel / 2 + 0.001
-                        && abs(value / pixel - (value / pixel).rounded()) <= 0.001)
+        let pairs: [(CGFloat, CGFloat)] = [
+            (actual.minX, target.minX),
+            (actual.minY, target.minY),
+            (actual.width, target.width),
+            (actual.height, target.height)
+        ]
+        for pixel: CGFloat in [1.0, 0.5] {
+            let halfPixelLimit = pixel * 0.5 + 0.001
+            let matchesAll = pairs.allSatisfy { value, targetVal in
+                let delta = abs(value - targetVal)
+                if delta <= 0.001 { return true }
+                guard delta <= halfPixelLimit else { return false }
+                let scaled = value / pixel
+                return abs(scaled - scaled.rounded()) <= 0.001
             }
+            if matchesAll { return true }
         }
+        return false
     }
 
     private func alignmentFrame(_ motion: Alignment, at elapsed: TimeInterval, size: CGSize) -> CGRect {

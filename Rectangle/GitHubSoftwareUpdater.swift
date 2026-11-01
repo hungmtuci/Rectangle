@@ -73,10 +73,17 @@ final class GitHubSoftwareUpdater {
 
     static let repoHomeURL = URL(string: "https://github.com/\(githubOwner)/\(githubRepo)")!
     static let releasesPageURL = URL(string: "https://github.com/\(githubOwner)/\(githubRepo)/releases")!
-    private static let releasesListAPIURL = URL(string: "https://api.github.com/repos/\(githubOwner)/\(githubRepo)/releases?per_page=10")!
-    private static let tagsListAPIURL = URL(string: "https://api.github.com/repos/\(githubOwner)/\(githubRepo)/tags?per_page=20")!
+    private static let releasesListAPIURL = URL(string: "https://api.github.com/repos/\(githubOwner)/\(githubRepo)/releases?per_page=5")!
+    private static let tagsListAPIURL = URL(string: "https://api.github.com/repos/\(githubOwner)/\(githubRepo)/tags?per_page=10")!
     private static let latestReleaseRedirectURL = URL(string: "https://github.com/\(githubOwner)/\(githubRepo)/releases/latest")!
     private static let lastCheckDefaultsKey = "githubUpdaterLastCheckedAt"
+
+    private static let byteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB]
+        formatter.countStyle = .file
+        return formatter
+    }()
 
     var isChecking: Bool = false
     var isInstallingUpdate: Bool = false
@@ -86,6 +93,8 @@ final class GitHubSoftwareUpdater {
     var availableReleaseTag: String?
 
     fileprivate var pendingRelease: ResolvedRelease?
+    private var cachedReleasesETag: String?
+    private var cachedResolvedRelease: ResolvedRelease?
     private var updateWindow: NSWindow?
     private var activeDownloadTask: Task<Void, Never>?
 
@@ -107,11 +116,11 @@ final class GitHubSoftwareUpdater {
     }
 
     var currentVersionString: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "2.1.1-custom"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "2.1.2-custom"
     }
 
     var currentBuildString: String {
-        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "113"
+        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "114"
     }
 
     func openRepositoryPage() {
@@ -215,28 +224,24 @@ final class GitHubSoftwareUpdater {
     private func fetchNewestReleaseOrTag() async throws -> ResolvedRelease? {
         let userAgent = "Rectangle-GitHub-Updater/\(currentVersionString)"
 
-        async let relResp = fetchGitHubData(url: Self.releasesListAPIURL, userAgent: userAgent)
-        async let tagResp = fetchGitHubData(url: Self.tagsListAPIURL, userAgent: userAgent)
+        let relResult = try await fetchGitHubData(
+            url: Self.releasesListAPIURL,
+            userAgent: userAgent,
+            ifNoneMatch: cachedResolvedRelease != nil ? cachedReleasesETag : nil
+        )
 
-        let (relResult, tagResult) = try await (relResp, tagResp)
-
-        if relResult.statusCode == 403 || relResult.statusCode == 429 || tagResult.statusCode == 403 || tagResult.statusCode == 429 {
-            return await fetchViaHTMLRedirectFallback()
+        if relResult.statusCode == 304, let cachedResolvedRelease {
+            return cachedResolvedRelease
         }
 
-        if relResult.statusCode == 404 && tagResult.statusCode == 404 {
-            return nil
+        if relResult.statusCode == 403 || relResult.statusCode == 429 {
+            return await fetchViaHTMLRedirectFallback()
         }
 
         var releases: [GitHubReleaseDTO] = []
         if (200...299).contains(relResult.statusCode), let data = relResult.data {
             releases = ((try? JSONDecoder().decode([GitHubReleaseDTO].self, from: data)) ?? [])
                 .filter { $0.draft != true }
-        }
-
-        var tags: [GitHubTagDTO] = []
-        if (200...299).contains(tagResult.statusCode), let data = tagResult.data {
-            tags = (try? JSONDecoder().decode([GitHubTagDTO].self, from: data)) ?? []
         }
 
         var bestRelease: GitHubReleaseDTO?
@@ -251,6 +256,45 @@ final class GitHubSoftwareUpdater {
             }
         }
 
+        if let rel = bestRelease {
+            let cleanVer = Self.cleanVersionString(rel.tagName)
+            let resolvedAsset = await resolveDownloadAsset(from: rel.assets ?? [], rawTag: rel.tagName, cleanVersion: cleanVer)
+            let pageURL = URL(string: rel.htmlURL) ?? Self.releasesPageURL
+            let title = (rel.name?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+                ?? "Rectangle \(rel.tagName)"
+            let notes = (rel.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolved = ResolvedRelease(
+                rawTag: rel.tagName,
+                cleanVersion: cleanVer,
+                title: title,
+                releaseNotes: notes,
+                pageURL: pageURL,
+                downloadURL: resolvedAsset.url,
+                assetName: resolvedAsset.name,
+                assetSize: resolvedAsset.size,
+                assetKind: resolvedAsset.kind
+            )
+            if let etag = relResult.etag {
+                cachedReleasesETag = etag
+                cachedResolvedRelease = resolved
+            }
+            return resolved
+        }
+
+        // Only query /tags as a fallback when no published GitHub Release exists yet.
+        let tagResult = try await fetchGitHubData(url: Self.tagsListAPIURL, userAgent: userAgent, ifNoneMatch: nil)
+        if tagResult.statusCode == 403 || tagResult.statusCode == 429 {
+            return await fetchViaHTMLRedirectFallback()
+        }
+        if relResult.statusCode == 404 && tagResult.statusCode == 404 {
+            return nil
+        }
+
+        var tags: [GitHubTagDTO] = []
+        if (200...299).contains(tagResult.statusCode), let data = tagResult.data {
+            tags = (try? JSONDecoder().decode([GitHubTagDTO].self, from: data)) ?? []
+        }
+
         var bestTagName: String?
         for tag in tags {
             guard !Self.cleanVersionString(tag.name).isEmpty else { continue }
@@ -263,40 +307,15 @@ final class GitHubSoftwareUpdater {
             }
         }
 
-        if let rel = bestRelease {
-            if let bestTagName, Self.isRemoteVersionNewer(bestTagName, than: rel.tagName) {
-                // Fall through to newer tag below
-            } else {
-                let cleanVer = Self.cleanVersionString(rel.tagName)
-                let resolvedAsset = await resolveDownloadAsset(from: rel.assets ?? [], rawTag: rel.tagName, cleanVersion: cleanVer)
-                let pageURL = URL(string: rel.htmlURL) ?? Self.releasesPageURL
-                let title = (rel.name?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
-                    ?? "Rectangle \(rel.tagName)"
-                let notes = (rel.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                return ResolvedRelease(
-                    rawTag: rel.tagName,
-                    cleanVersion: cleanVer,
-                    title: title,
-                    releaseNotes: notes,
-                    pageURL: pageURL,
-                    downloadURL: resolvedAsset.url,
-                    assetName: resolvedAsset.name,
-                    assetSize: resolvedAsset.size,
-                    assetKind: resolvedAsset.kind
-                )
-            }
-        }
-
         if let rawTag = bestTagName {
             let cleanVer = Self.cleanVersionString(rawTag)
-            let matchingRel = releases.first { Self.cleanVersionString($0.tagName) == cleanVer }
-            let resolvedAsset = await resolveDownloadAsset(from: matchingRel?.assets ?? [], rawTag: rawTag, cleanVersion: cleanVer)
+            let resolvedAsset = await resolveDownloadAsset(from: [], rawTag: rawTag, cleanVersion: cleanVer)
             let pageURL = URL(string: "https://github.com/\(Self.githubOwner)/\(Self.githubRepo)/releases/tag/\(rawTag)") ?? Self.releasesPageURL
             return ResolvedRelease(
                 rawTag: rawTag,
                 cleanVersion: cleanVer,
-                title: matchingRel?.name ?? "Rectangle \(rawTag)",
-                releaseNotes: (matchingRel?.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+                title: "Rectangle \(rawTag)",
+                releaseNotes: "",
                 pageURL: pageURL,
                 downloadURL: resolvedAsset.url,
                 assetName: resolvedAsset.name,
@@ -308,16 +327,25 @@ final class GitHubSoftwareUpdater {
         return nil
     }
 
-    private func fetchGitHubData(url: URL, userAgent: String) async throws -> (statusCode: Int, data: Data?) {
+    private func fetchGitHubData(
+        url: URL,
+        userAgent: String,
+        ifNoneMatch: String?
+    ) async throws -> (statusCode: Int, data: Data?, etag: String?) {
         var req = URLRequest(url: url)
         req.timeoutInterval = 12
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        if let ifNoneMatch, !ifNoneMatch.isEmpty {
+            req.setValue(ifNoneMatch, forHTTPHeaderField: "If-None-Match")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: req)
-        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        return (code, data)
+        let http = response as? HTTPURLResponse
+        let code = http?.statusCode ?? 0
+        let etag = http?.value(forHTTPHeaderField: "ETag")
+        return (code, data, etag)
     }
 
     private func fetchViaHTMLRedirectFallback() async -> ResolvedRelease? {
@@ -476,7 +504,8 @@ final class GitHubSoftwareUpdater {
         let packageLabel = release.assetName ?? "Rectangle.\(release.assetKind == .dmg ? "dmg" : "zip")"
         statusMessage = "Đang kết nối tải gói \(packageLabel)…"
 
-        activeDownloadTask = Task { @MainActor in
+        let progressHandler = Self.makeProgressHandler(for: self)
+        activeDownloadTask = Task { @MainActor [self] in
             let stageRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
                 .appendingPathComponent("rectangle_autoupdate_\(UUID().uuidString)", isDirectory: true)
             do {
@@ -487,38 +516,12 @@ final class GitHubSoftwareUpdater {
                 req.setValue("Rectangle-GitHub-Updater/\(currentVersionString)", forHTTPHeaderField: "User-Agent")
                 req.timeoutInterval = 180
 
-                let (asyncBytes, response) = try await URLSession.shared.bytes(for: req)
-                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                    throw NSError(domain: "RectangleGitHubUpdater", code: http.statusCode, userInfo: [
-                        NSLocalizedDescriptionKey: "Máy chủ GitHub trả về mã lỗi HTTP \(http.statusCode)."
-                    ])
-                }
-
-                let expectedTotal = response.expectedContentLength > 0 ? response.expectedContentLength : release.assetSize
-                FileManager.default.createFile(atPath: archivePath.path, contents: nil)
-                let handle = try FileHandle(forWritingTo: archivePath)
-                defer { try? handle.close() }
-
-                var received: Int64 = 0
-                var buffer = Data()
-                buffer.reserveCapacity(65_536)
-
-                for try await byte in asyncBytes {
-                    try Task.checkCancellation()
-                    buffer.append(byte)
-                    if buffer.count >= 65_536 {
-                        try handle.write(contentsOf: buffer)
-                        received += Int64(buffer.count)
-                        buffer.removeAll(keepingCapacity: true)
-                        updateDownloadProgress(received: received, expected: expectedTotal)
-                    }
-                }
-                if !buffer.isEmpty {
-                    try handle.write(contentsOf: buffer)
-                    received += Int64(buffer.count)
-                    buffer.removeAll()
-                }
-                try handle.close()
+                try await Self.downloadArchiveToFile(
+                    request: req,
+                    destinationURL: archivePath,
+                    fallbackExpectedSize: release.assetSize,
+                    onProgress: progressHandler
+                )
 
                 downloadProgress = 0.90
                 statusMessage = "Đang giải nén & xác thực gói ứng dụng…"
@@ -582,15 +585,12 @@ final class GitHubSoftwareUpdater {
     }
 
     private func updateDownloadProgress(received: Int64, expected: Int64) {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useMB]
-        formatter.countStyle = .file
-        let recStr = formatter.string(fromByteCount: received)
+        let recStr = Self.byteFormatter.string(fromByteCount: received)
 
         if expected > 0 {
             let ratio = min(max(Double(received) / Double(expected), 0.02), 0.88)
             downloadProgress = ratio
-            let expStr = formatter.string(fromByteCount: expected)
+            let expStr = Self.byteFormatter.string(fromByteCount: expected)
             let pct = Int((Double(received) / Double(expected)) * 100)
             statusMessage = "Đang tải về… \(min(pct, 100))% (\(recStr) / \(expStr))"
         } else {
@@ -666,7 +666,36 @@ final class GitHubSoftwareUpdater {
         NSApp.terminate(nil)
     }
 
-    // MARK: - Subprocess & Bundle Helpers
+    // MARK: - Subprocess, Kernel-Buffered Download & Bundle Helpers
+
+    private nonisolated static func downloadArchiveToFile(
+        request: URLRequest,
+        destinationURL: URL,
+        fallbackExpectedSize: Int64,
+        onProgress: @escaping @Sendable (Int64, Int64) -> Void
+    ) async throws {
+        let delegate = ArchiveDownloadDelegate(
+            destinationURL: destinationURL,
+            fallbackExpectedSize: fallbackExpectedSize,
+            onProgress: onProgress
+        )
+        let queue = OperationQueue()
+        queue.name = "com.knollsoft.Rectangle.githubDownload"
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .userInitiated
+
+        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: queue)
+        let task = session.downloadTask(with: request)
+
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                delegate.start(task: task, session: session, continuation: continuation)
+            }
+        } onCancel: {
+            task.cancel()
+            session.invalidateAndCancel()
+        }
+    }
 
     private nonisolated static func extractAppFromDmg(
         dmgPath: String,
@@ -799,6 +828,16 @@ final class GitHubSoftwareUpdater {
         return parts.map(String.init).joined(separator: ".")
     }
 
+    private nonisolated static func makeProgressHandler(
+        for updater: GitHubSoftwareUpdater
+    ) -> @Sendable (Int64, Int64) -> Void {
+        { [weak updater] received, expected in
+            Task { @MainActor in
+                updater?.updateDownloadProgress(received: received, expected: expected)
+            }
+        }
+    }
+
     nonisolated static func isRemoteVersionNewer(_ remoteTag: String, than localVersion: String) -> Bool {
         let remoteParts = cleanVersionString(remoteTag).split(separator: ".").compactMap { Int($0) }
         let localParts = cleanVersionString(localVersion).split(separator: ".").compactMap { Int($0) }
@@ -812,6 +851,127 @@ final class GitHubSoftwareUpdater {
             }
         }
         return false
+    }
+}
+
+private final class ArchiveDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destinationURL: URL
+    private let fallbackExpectedSize: Int64
+    private let onProgress: @Sendable (Int64, Int64) -> Void
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var session: URLSession?
+    private var moveError: Error?
+    private var didMoveFile = false
+    private var lastProgressReportTime: TimeInterval = 0
+
+    init(
+        destinationURL: URL,
+        fallbackExpectedSize: Int64,
+        onProgress: @escaping @Sendable (Int64, Int64) -> Void
+    ) {
+        self.destinationURL = destinationURL
+        self.fallbackExpectedSize = fallbackExpectedSize
+        self.onProgress = onProgress
+    }
+
+    func start(
+        task: URLSessionDownloadTask,
+        session: URLSession,
+        continuation: CheckedContinuation<Void, Error>
+    ) {
+        lock.lock()
+        self.continuation = continuation
+        self.session = session
+        lock.unlock()
+        task.resume()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        let shouldReport = (now - lastProgressReportTime) >= 0.065
+        if shouldReport {
+            lastProgressReportTime = now
+        }
+        lock.unlock()
+
+        if shouldReport {
+            let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : fallbackExpectedSize
+            onProgress(totalBytesWritten, expected)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        if let http = downloadTask.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            lock.lock()
+            moveError = NSError(domain: "RectangleGitHubUpdater", code: http.statusCode, userInfo: [
+                NSLocalizedDescriptionKey: "Máy chủ GitHub trả về mã lỗi HTTP \(http.statusCode)."
+            ])
+            lock.unlock()
+            return
+        }
+
+        do {
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+            try FileManager.default.moveItem(at: location, to: destinationURL)
+            let finalSize = (try? FileManager.default.attributesOfItem(atPath: destinationURL.path)[.size] as? Int64) ?? fallbackExpectedSize
+            onProgress(finalSize, max(finalSize, fallbackExpectedSize))
+            lock.lock()
+            didMoveFile = true
+            lock.unlock()
+        } catch {
+            lock.lock()
+            moveError = error
+            lock.unlock()
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        let cont = continuation
+        continuation = nil
+        let storedMoveError = moveError
+        let moved = didMoveFile
+        let activeSession = self.session
+        self.session = nil
+        lock.unlock()
+
+        activeSession?.finishTasksAndInvalidate()
+        guard let cont else { return }
+
+        if let error {
+            let nsErr = error as NSError
+            if nsErr.domain == NSURLErrorDomain && nsErr.code == NSURLErrorCancelled {
+                cont.resume(throwing: CancellationError())
+            } else {
+                cont.resume(throwing: error)
+            }
+            return
+        }
+        if let storedMoveError {
+            cont.resume(throwing: storedMoveError)
+            return
+        }
+        if !moved {
+            cont.resume(throwing: NSError(domain: "RectangleGitHubUpdater", code: 5, userInfo: [
+                NSLocalizedDescriptionKey: "Không nhận được dữ liệu tệp cập nhật từ GitHub."
+            ]))
+            return
+        }
+        cont.resume()
     }
 }
 

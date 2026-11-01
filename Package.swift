@@ -12,15 +12,13 @@ let package = Package(
         .executable(name: "Rectangle", targets: ["Rectangle"])
     ],
     dependencies: [
-        .package(url: "https://github.com/rxhanson/MASShortcut", revision: "2f9fbb3f959b7a683c6faaf9638d22afad37a235"),
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.0.0")
+        .package(url: "https://github.com/rxhanson/MASShortcut", revision: "2f9fbb3f959b7a683c6faaf9638d22afad37a235")
     ],
     targets: [
         .executableTarget(
             name: "Rectangle",
             dependencies: [
-                .product(name: "MASShortcut", package: "MASShortcut"),
-                .product(name: "Sparkle", package: "Sparkle")
+                .product(name: "MASShortcut", package: "MASShortcut")
             ],
             path: "Rectangle",
             exclude: [

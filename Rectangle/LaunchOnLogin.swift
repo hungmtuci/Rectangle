@@ -44,12 +44,6 @@ final class StartupPreferencesManager {
             guard !isSyncingInternally, launchOnLogin != oldValue else { return }
             Defaults.launchOnLogin.enabled = launchOnLogin
             LaunchOnLogin.isEnabled = launchOnLogin
-            let actual = LaunchOnLogin.isEnabled
-            if actual != launchOnLogin && launchOnLogin {
-                // Keep user intent in Defaults if running outside /Applications during testing,
-                // while SMAppService registers cleanly when installed in /Applications.
-                Defaults.launchOnLogin.enabled = launchOnLogin
-            }
         }
     }
 
@@ -61,22 +55,23 @@ final class StartupPreferencesManager {
     }
 
     private var isSyncingInternally = false
+    private var notificationObservers: [NSObjectProtocol] = []
 
     private init() {
         let initialLaunch = Defaults.launchOnLogin.enabled || LaunchOnLogin.isEnabled
         self.launchOnLogin = initialLaunch
         self.showSettingsOnLaunch = Defaults.showSettingsOnLaunch.enabled
 
-        Notification.Name.appWillBecomeActive.onPost { [weak self] _ in
+        notificationObservers.append(Notification.Name.appWillBecomeActive.onPost { [weak self] _ in
             Task { @MainActor in
                 self?.refreshFromSystem()
             }
-        }
-        Notification.Name.configImported.onPost { [weak self] _ in
+        })
+        notificationObservers.append(Notification.Name.configImported.onPost { [weak self] _ in
             Task { @MainActor in
                 self?.reloadFromDefaults()
             }
-        }
+        })
     }
 
     func syncOnAppLaunch() {

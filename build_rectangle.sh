@@ -6,8 +6,8 @@ APP_NAME="Rectangle"
 APP_BUNDLE="${PROJECT_DIR}/${APP_NAME}.app"
 WORKSPACE_APP_BUNDLE="$(cd "${PROJECT_DIR}/.." && pwd)/${APP_NAME}.app"
 DIST_DIR="${PROJECT_DIR}/dist"
-RECTANGLE_VERSION="${RECTANGLE_VERSION:-2.1.1-custom}"
-RECTANGLE_BUILD="${RECTANGLE_BUILD:-113}"
+RECTANGLE_VERSION="${RECTANGLE_VERSION:-2.1.2-custom}"
+RECTANGLE_BUILD="${RECTANGLE_BUILD:-114}"
 
 SKIP_INSTALL=0
 for arg in "$@"; do
@@ -43,14 +43,15 @@ echo "=== [2/5] Assembling ${APP_NAME}.app bundle structure ==="
 rm -rf "${APP_BUNDLE}"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
-mkdir -p "${APP_BUNDLE}/Contents/Frameworks"
 
 cp "${EXECUTABLE_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+/usr/bin/strip -x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" 2>/dev/null || true
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
-# Copy dynamic frameworks (e.g., Sparkle.framework) and SwiftPM resource bundles
+# Copy dynamic frameworks (if any) and SwiftPM resource bundles
 for fw in "${BIN_DIR}"/*.framework; do
     if [[ -d "${fw}" ]]; then
+        mkdir -p "${APP_BUNDLE}/Contents/Frameworks"
         cp -R "${fw}" "${APP_BUNDLE}/Contents/Frameworks/"
     fi
 done
@@ -228,9 +229,6 @@ mkdir -p "${TMP_SIGN_DIR}"
 cp -R "${APP_BUNDLE}" "${TMP_SIGN_DIR}/${APP_NAME}.app"
 chmod -R u+w "${TMP_SIGN_DIR}/${APP_NAME}.app" 2>/dev/null || true
 xattr -cr "${TMP_SIGN_DIR}/${APP_NAME}.app" 2>/dev/null || true
-if [[ -d "${TMP_SIGN_DIR}/${APP_NAME}.app/Contents/Frameworks/Sparkle.framework" ]]; then
-    codesign --force --deep --sign - "${TMP_SIGN_DIR}/${APP_NAME}.app/Contents/Frameworks/Sparkle.framework"
-fi
 codesign --force --deep --sign - "${TMP_SIGN_DIR}/${APP_NAME}.app"
 codesign --verify --deep --strict "${TMP_SIGN_DIR}/${APP_NAME}.app"
 

@@ -165,8 +165,15 @@ enum GridTiling {
         let index = stages.firstIndex { 1 + (windows.count - 1) / $0 == groupCount }!
         // Preserve the actual subdivision across a changed set, even when it
         // currently has the same grouping as an earlier candidate.
-        let candidates = (0..<stages.count).map { step in
-            step == 0 && !advance ? active : stages[(index + step + (advance ? 1 : 0)) % stages.count]
+        let advanceOffset = advance ? 1 : 0
+        var candidates: [Int] = []
+        candidates.reserveCapacity(stages.count)
+        for step in 0..<stages.count {
+            if step == 0 && !advance {
+                candidates.append(active)
+            } else {
+                candidates.append(stages[(index + step + advanceOffset) % stages.count])
+            }
         }
         var achieved = observedFrames
         var chosen = active

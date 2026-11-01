@@ -123,16 +123,25 @@ class AccessibilityElement {
     /// Whether this element is an enabled green stoplight button (Full Screen or Zoom)
     /// on a window that is not currently in native macOS Full Screen.
     var isGreenStoplightButton: Bool {
-        guard let currentSubrole = subrole else { return false }
-        guard currentSubrole == .fullScreenButton || currentSubrole == .zoomButton else { return false }
-        guard isEnabled != false else { return false }
-        if currentSubrole == .fullScreenButton {
-            return true
+        greenStoplightParentWindow() != nil
+    }
+
+    /// Resolves and returns the owning `AccessibilityElement` window in a single AX pass
+    /// if `self` is an enabled green stoplight button on a non-fullscreen window.
+    func greenStoplightParentWindow() -> AccessibilityElement? {
+        guard let currentSubrole = subrole else { return nil }
+        guard currentSubrole == .fullScreenButton || currentSubrole == .zoomButton else { return nil }
+        guard isEnabled != false, let parentWindow = windowElement else { return nil }
+        if currentSubrole == .zoomButton, parentWindow.isFullScreen == true {
+            return nil
         }
-        if let windowElement, windowElement.isFullScreen != true {
-            return true
-        }
-        return false
+        return parentWindow
+    }
+
+    /// Checks whether this window element is a standard resizable window (excluding sheets and system dialogs).
+    func isEligibleStandardWindow() -> Bool {
+        guard role != .sheet, subrole != .systemDialog else { return false }
+        return isResizable()
     }
     
     private var position: CGPoint? {

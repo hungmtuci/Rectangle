@@ -391,7 +391,10 @@ private final class NonDraggableVisualEffectView: NSVisualEffectView {
 
 private final class GreenButtonPanelHostView: NSView {
     var placement: GreenButtonPopoverPlacement? {
-        didSet { needsDisplay = true }
+        didSet {
+            cachedCorridorPath = placement.flatMap { Self.buildCorridorPath(for: $0) }
+            needsDisplay = true
+        }
     }
     var buttonHighlightRect: CGRect = .null {
         didSet { needsDisplay = true }
@@ -401,6 +404,7 @@ private final class GreenButtonPanelHostView: NSView {
     }
     var onClickGreenButton: (() -> Void)?
 
+    private var cachedCorridorPath: NSBezierPath?
     private var pressedInBridge = false
 
     override var mouseDownCanMoveWindow: Bool { false }
@@ -416,8 +420,10 @@ private final class GreenButtonPanelHostView: NSView {
         // tracking occlusion. Filling the green-button bridge + funnel corridor with 0.06 alpha
         // stays invisible to the eye while 100% occluding the underlying _NSThemeZoomWidget so
         // macOS's native green-button hover menu never opens on top of our grid.
-        NSColor.white.withAlphaComponent(0.06).setFill()
-        corridorPath(for: placement).fill()
+        if let cachedCorridorPath {
+            NSColor.white.withAlphaComponent(0.06).setFill()
+            cachedCorridorPath.fill()
+        }
 
         if !buttonHighlightRect.isNull {
             let ringRect = buttonHighlightRect.insetBy(dx: -1.5, dy: -1.5)
@@ -431,9 +437,9 @@ private final class GreenButtonPanelHostView: NSView {
         }
     }
 
-    private func corridorPath(for placement: GreenButtonPopoverPlacement) -> NSBezierPath {
+    private static func buildCorridorPath(for placement: GreenButtonPopoverPlacement) -> NSBezierPath? {
+        guard placement.hasButtonBridge, !placement.buttonBridgeRect.isNull else { return nil }
         let path = NSBezierPath()
-        guard placement.hasButtonBridge, !placement.buttonBridgeRect.isNull else { return path }
         path.appendRect(placement.buttonBridgeRect)
 
         let bridge = placement.buttonBridgeRect
@@ -472,8 +478,7 @@ private final class GreenButtonPanelHostView: NSView {
             return hit
         }
 
-        guard let placement, placement.hasButtonBridge, !placement.buttonBridgeRect.isNull else { return nil }
-        if corridorPath(for: placement).contains(localPoint) {
+        if let cachedCorridorPath, cachedCorridorPath.contains(localPoint) {
             return self
         }
         return nil
@@ -516,8 +521,18 @@ private final class GreenButtonCardView: NSView {
     private let statusLabel = NSTextField(labelWithString: "")
     private let densityContainer = NSView()
 
+    private struct MaskCacheKey: Equatable {
+        let width: CGFloat
+        let height: CGFloat
+        let opensBelow: Bool
+        let quantizedArrowTipX: CGFloat
+    }
+
     private var opensBelow = true
     private var arrowTipLocalX: CGFloat = 36
+    private var lastMaskCacheKey: MaskCacheKey?
+    private var currentPresetActions: [WindowAction] = []
+    private var currentScreenLabels: [String] = []
     private var presetButtons: [GreenButtonPresetButton] = []
     private var displayButtons: [GreenButtonSmallPillButton] = []
     private var densityButtons: [(cols: Int, rows: Int, button: GreenButtonSmallPillButton)] = []
@@ -734,20 +749,28 @@ private final class GreenButtonCardView: NSView {
         )
         self.currentBodyRect = bodyRect
 
-        let bubblePath = Self.makePopoverPath(
-            bodyRect: bodyRect,
+        let maskKey = MaskCacheKey(
+            width: bounds.width,
+            height: bounds.height,
             opensBelow: opensBelow,
-            arrowTipX: arrowTipLocalX,
-            cornerRadius: 12,
-            arrowWidth: GreenButtonPopoverPlacement.arrowWidth,
-            arrowHeight: arrowH
+            quantizedArrowTipX: (arrowTipLocalX * 2).rounded() / 2
         )
-
-        effectView.maskImage = Self.makeMaskImage(size: bounds.size, path: bubblePath)
-        layer?.shadowPath = bubblePath.cgPathFallback
-
-        borderLayer.frame = bounds
-        borderLayer.path = bubblePath.cgPathFallback
+        if lastMaskCacheKey != maskKey {
+            lastMaskCacheKey = maskKey
+            let bubblePath = Self.makePopoverPath(
+                bodyRect: bodyRect,
+                opensBelow: opensBelow,
+                arrowTipX: maskKey.quantizedArrowTipX,
+                cornerRadius: 12,
+                arrowWidth: GreenButtonPopoverPlacement.arrowWidth,
+                arrowHeight: arrowH
+            )
+            let cgPath = bubblePath.cgPathFallback
+            effectView.maskImage = Self.makeMaskImage(size: bounds.size, path: bubblePath)
+            layer?.shadowPath = cgPath
+            borderLayer.frame = bounds
+            borderLayer.path = cgPath
+        }
         updateBorderAppearance()
 
         rebuildPresetButtons(presets)
@@ -886,10 +909,18 @@ private final class GreenButtonCardView: NSView {
     }
 
     private func rebuildDisplayButtons(_ labels: [String], selectedIndex: Int) {
+        if labels == currentScreenLabels && displayButtons.count == labels.count {
+            for (idx, pill) in displayButtons.enumerated() {
+                pill.isSelectedPill = (idx == selectedIndex)
+            }
+            return
+        }
+        currentScreenLabels = labels
+
         for button in displayButtons {
             button.removeFromSuperview()
         }
-        displayButtons.removeAll()
+        displayButtons.removeAll(keepingCapacity: true)
 
         for (idx, title) in labels.enumerated() {
             let pill = GreenButtonSmallPillButton(title: title, fontSize: 10.5, horizontalPadding: 7, height: 20)
@@ -907,15 +938,24 @@ private final class GreenButtonCardView: NSView {
     }
 
     private func rebuildDensityButtons(activeColumns: Int, activeRows: Int) {
-        for entry in densityButtons {
-            entry.button.removeFromSuperview()
-        }
-        densityButtons.removeAll()
-
         var presets = GridSelection.quickDensities
         if !presets.contains(where: { $0.columns == activeColumns && $0.rows == activeRows }) {
             presets.append((activeColumns, activeRows))
         }
+
+        let matchesExisting = densityButtons.count == presets.count
+            && zip(densityButtons, presets).allSatisfy { $0.0.cols == $0.1.columns && $0.0.rows == $0.1.rows }
+        if matchesExisting {
+            for entry in densityButtons {
+                entry.button.isSelectedPill = (entry.cols == activeColumns && entry.rows == activeRows)
+            }
+            return
+        }
+
+        for entry in densityButtons {
+            entry.button.removeFromSuperview()
+        }
+        densityButtons.removeAll(keepingCapacity: true)
 
         for preset in presets {
             let title = "\(preset.columns)×\(preset.rows)"
@@ -931,10 +971,16 @@ private final class GreenButtonCardView: NSView {
     }
 
     private func rebuildPresetButtons(_ presets: [WindowAction]) {
+        if presets == currentPresetActions && presetButtons.count == presets.count {
+            clearPresetHover()
+            return
+        }
+        currentPresetActions = presets
+
         for button in presetButtons {
             button.removeFromSuperview()
         }
-        presetButtons.removeAll()
+        presetButtons.removeAll(keepingCapacity: true)
 
         for action in presets {
             let button = GreenButtonPresetButton(action: action)
@@ -1254,21 +1300,21 @@ private final class GreenButtonPresetButton: NSView {
 
         let iconColor = isHovered || isPressed ? NSColor.controlAccentColor : NSColor.labelColor
         let templateImage = windowAction.image
+        let targetSize = NSSize(width: 18, height: 12)
+        var iconRect = NSRect(
+            x: round((bounds.width - targetSize.width) / 2),
+            y: round((bounds.height - targetSize.height) / 2),
+            width: targetSize.width,
+            height: targetSize.height
+        )
         if templateImage.size.width > 0 && templateImage.size.height > 0,
-           let tinted = templateImage.copy() as? NSImage {
-            let targetSize = NSSize(width: 18, height: 12)
-            let iconRect = NSRect(
-                x: round((bounds.width - targetSize.width) / 2),
-                y: round((bounds.height - targetSize.height) / 2),
-                width: targetSize.width,
-                height: targetSize.height
-            )
-            tinted.size = targetSize
-            tinted.lockFocus()
-            iconColor.set()
-            NSRect(origin: .zero, size: targetSize).fill(using: .sourceAtop)
-            tinted.unlockFocus()
-            tinted.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: isHovered ? 1.0 : 0.88)
+           let cgContext = NSGraphicsContext.current?.cgContext,
+           let cgImage = templateImage.cgImage(forProposedRect: &iconRect, context: NSGraphicsContext.current, hints: nil) {
+            cgContext.saveGState()
+            cgContext.clip(to: iconRect, mask: cgImage)
+            iconColor.withAlphaComponent(isHovered || isPressed ? 1.0 : 0.88).setFill()
+            cgContext.fill(iconRect)
+            cgContext.restoreGState()
         } else {
             drawFallbackGlyph(in: pillRect.insetBy(dx: 4, dy: 6), color: iconColor)
         }
@@ -1660,6 +1706,9 @@ private final class GreenButtonGridCanvasView: NSView {
         }
     }
 
+    private static let badgeFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+    private static let ghostDashPattern: [CGFloat] = [4.0, 3.0]
+
     override func draw(_ dirtyRect: NSRect) {
         guard columns > 0, rows > 0, bounds.width > 0, bounds.height > 0 else { return }
 
@@ -1686,10 +1735,16 @@ private final class GreenButtonGridCanvasView: NSView {
             )
         }
 
+        let selMinCol = activeSelection?.minColumn ?? -1
+        let selMaxCol = activeSelection?.maxColumn ?? -2
+        let selMinRow = activeSelection?.minRow ?? -1
+        let selMaxRow = activeSelection?.maxRow ?? -2
+
         for row in 0..<rows {
+            let rowSelected = row >= selMinRow && row <= selMaxRow
             for col in 0..<columns {
                 let cellRect = rectForCell(col: col, row: row)
-                let isSelected = activeSelection?.contains(column: col, row: row) == true
+                let isSelected = rowSelected && col >= selMinCol && col <= selMaxCol
                 let path = NSBezierPath(roundedRect: cellRect.insetBy(dx: 0.5, dy: 0.5), xRadius: cornerRadius, yRadius: cornerRadius)
 
                 (isSelected ? selectedFill : idleFill).setFill()
@@ -1710,8 +1765,7 @@ private final class GreenButtonGridCanvasView: NSView {
                 height: max(8, ghost.height * bounds.height)
             ).insetBy(dx: 1.25, dy: 1.25)
             let ghostPath = NSBezierPath(roundedRect: ghostRect, xRadius: cornerRadius, yRadius: cornerRadius)
-            let dashPattern: [CGFloat] = [4.0, 3.0]
-            ghostPath.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
+            ghostPath.setLineDash(Self.ghostDashPattern, count: Self.ghostDashPattern.count, phase: 0)
             ghostPath.lineWidth = 1.25
             NSColor.labelColor.withAlphaComponent(isDark ? 0.34 : 0.28).setStroke()
             ghostPath.stroke()
@@ -1729,7 +1783,7 @@ private final class GreenButtonGridCanvasView: NSView {
             if activelySelecting {
                 let badgeText = "\(selection.columnSpan) × \(selection.rowSpan)"
                 let attrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+                    .font: Self.badgeFont,
                     .foregroundColor: NSColor.white
                 ]
                 let textSize = (badgeText as NSString).size(withAttributes: attrs)

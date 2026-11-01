@@ -423,13 +423,17 @@ struct ShortcutCycle {
         }
     }
 
+    private static let dictionaryTransformer: ValueTransformer? = ValueTransformer(
+        forName: NSValueTransformerName(rawValue: MASDictionaryTransformerName)
+    )
+
     static func shortcut(for action: WindowAction, userDefaults: UserDefaults = .standard) -> MASShortcut? {
         return shortcut(forDefaultsKey: action.name, userDefaults: userDefaults)
     }
 
     static func shortcut(forDefaultsKey defaultsKey: String, userDefaults: UserDefaults = .standard) -> MASShortcut? {
         guard let shortcutDict = userDefaults.dictionary(forKey: defaultsKey),
-              let dictTransformer = ValueTransformer(forName: NSValueTransformerName(rawValue: MASDictionaryTransformerName)),
+              let dictTransformer = dictionaryTransformer,
               let shortcut = dictTransformer.transformedValue(shortcutDict) as? MASShortcut
         else {
             return nil

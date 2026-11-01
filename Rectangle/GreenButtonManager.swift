@@ -44,7 +44,10 @@ class GreenButtonManager {
     /// while making intentional hover feel instantaneous and beating macOS's native hover menu.
     private static let hoverDwellDelay: TimeInterval = 0.025
     private static let hoverDismissGrace: TimeInterval = 0.11
-    private static let hoverQueryInterval: TimeInterval = 0.014
+    private static let hoverQueryInterval: TimeInterval = 0.016
+    private static let maxImmediateSweepSpeed: CGFloat = 1200
+    private static let negativeHitRadiusSquared: CGFloat = 9.0
+    private static let negativeHitTTL: TimeInterval = 0.18
 
     private(set) static var isPopoverActive = false
 
@@ -70,8 +73,13 @@ class GreenButtonManager {
     private var pendingTarget: ActiveTarget?
     private var presentWorkItem: DispatchWorkItem?
     private var dismissWorkItem: DispatchWorkItem?
-    private var trailingHoverWorkItem: DispatchWorkItem?
+    private var isTrailingHoverScheduled = false
+    private var trailingHoverGeneration: UInt64 = 0
     private var lastHoverSampleTime: TimeInterval = 0
+    private var lastCursorPoint: CGPoint?
+    private var lastCursorEventTime: TimeInterval = 0
+    private var lastNegativeHitPoint: CGPoint?
+    private var lastNegativeHitTime: TimeInterval = 0
     private var hoverQueryInFlight = false
     private var workspaceObservers: [NSObjectProtocol] = []
     private var appObservers: [NSObjectProtocol] = []
@@ -82,14 +90,12 @@ class GreenButtonManager {
 
         clickMonitor = ActiveEventMonitor(
             mask: [.leftMouseDown, .leftMouseUp],
-            filterer: { [weak self] event in self?.filterClick(event) ?? false },
-            handler: { _ in }
+            filterer: { [weak self] event in self?.filterClick(event) ?? false }
         )
 
         keyMonitor = ActiveEventMonitor(
             mask: [.keyDown],
-            filterer: { [weak self] event in self?.filterPanelKeyDown(event) ?? false },
-            handler: { _ in }
+            filterer: { [weak self] event in self?.filterPanelKeyDown(event) ?? false }
         )
 
         hoverMonitor = PassiveEventMonitor(mask: [.mouseMoved]) { [weak self] _ in
@@ -232,9 +238,11 @@ class GreenButtonManager {
             self?.toggleListening()
         })
         appObservers.append(Notification.Name.frontAppChanged.onPost { [weak self] _ in
+            self?.invalidateNegativeHitCache()
             self?.refreshTapSnapshot()
         })
         appObservers.append(Notification.Name.windowActionWillExecute.onPost { [weak self] _ in
+            self?.invalidateNegativeHitCache()
             self?.dismissPanel()
         })
         appObservers.append(NotificationCenter.default.addObserver(
@@ -242,6 +250,7 @@ class GreenButtonManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            self?.invalidateNegativeHitCache()
             self?.refreshTapSnapshot()
             self?.dismissPanel()
         })
@@ -253,6 +262,7 @@ class GreenButtonManager {
             queue: .main
         ) { [weak self] notification in
             guard let self else { return }
+            self.invalidateNegativeHitCache()
             self.refreshTapSnapshot()
             if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                app.processIdentifier == ProcessInfo.processInfo.processIdentifier {
@@ -267,6 +277,7 @@ class GreenButtonManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            self?.invalidateNegativeHitCache()
             self?.dismissPanel()
         })
     }
@@ -352,17 +363,13 @@ class GreenButtonManager {
             if let front = AccessibilityElement.getFrontWindowElement(),
                let bundleId = front.bundleIdentifier,
                !ignoredBundleIds.contains(bundleId),
-               front.isSheet != true,
-               front.isSystemDialog != true,
-               front.isResizable() {
+               front.isEligibleStandardWindow() {
                 return front
             }
             if let underCursor = AccessibilityElement.getWindowElementUnderCursor(),
                let bundleId = underCursor.bundleIdentifier,
                !ignoredBundleIds.contains(bundleId),
-               underCursor.isSheet != true,
-               underCursor.isSystemDialog != true,
-               underCursor.isResizable() {
+               underCursor.isEligibleStandardWindow() {
                 return underCursor
             }
             return AccessibilityElement.getFrontWindowElement()
@@ -446,10 +453,9 @@ class GreenButtonManager {
 
             guard
                 let element = AccessibilityElement(location),
-                element.isGreenStoplightButton,
+                let windowElement = element.greenStoplightParentWindow(),
                 case let buttonFrame = element.frame,
-                buttonFrame != .null,
-                let windowElement = element.windowElement
+                buttonFrame != .null
             else {
                 return false
             }
@@ -570,6 +576,7 @@ class GreenButtonManager {
             }
 
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            invalidateNegativeHitCache()
             cancelPendingPresentation()
             guard activeTarget != nil, let placement = gridPanel.currentPlacement else { return }
             let mousePoint = NSEvent.mouseLocation
@@ -586,10 +593,35 @@ class GreenButtonManager {
         }
     }
 
+    private func invalidateNegativeHitCache() {
+        lastNegativeHitPoint = nil
+        lastNegativeHitTime = 0
+    }
+
+    private func cancelTrailingHoverSample() {
+        if isTrailingHoverScheduled {
+            isTrailingHoverScheduled = false
+            trailingHoverGeneration &+= 1
+        }
+    }
+
+    private func scheduleTrailingHoverSample(delay: TimeInterval) {
+        guard !isTrailingHoverScheduled else { return }
+        isTrailingHoverScheduled = true
+        trailingHoverGeneration &+= 1
+        let expectedGen = trailingHoverGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.isTrailingHoverScheduled, self.trailingHoverGeneration == expectedGen else { return }
+            self.isTrailingHoverScheduled = false
+            self.sampleCursorForGreenButton()
+        }
+    }
+
     private func handleMouseMoved() {
         guard isHoverGridEnabled, !isPostingSyntheticOcclusionMove else { return }
 
         if NSEvent.pressedMouseButtons != 0 {
+            cancelTrailingHoverSample()
             if activeTarget != nil, gridPanel.isDraggingGrid {
                 cancelScheduledDismiss()
                 gridPanel.handleGlobalMouseDragged(atScreenPoint: NSEvent.mouseLocation)
@@ -602,6 +634,7 @@ class GreenButtonManager {
         let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let nonShiftModifiers = modifiers.subtracting([.shift, .capsLock, .numericPad, .function])
         if !nonShiftModifiers.isEmpty {
+            cancelTrailingHoverSample()
             cancelPendingPresentation()
             if activeTarget != nil && !gridPanel.isSelectingGrid && !gridPanel.isOpenedViaKeyboard {
                 dismissPanel()
@@ -612,6 +645,7 @@ class GreenButtonManager {
         let mouseAppKit = NSEvent.mouseLocation
 
         if activeTarget != nil, gridPanel.isVisible, let placement = gridPanel.currentPlacement {
+            cancelTrailingHoverSample()
             if gridPanel.isOpenedViaKeyboard || gridPanel.isSelectingGrid || placement.containsHoverPoint(mouseAppKit) {
                 cancelScheduledDismiss()
                 return
@@ -622,24 +656,37 @@ class GreenButtonManager {
         }
 
         let now = CACurrentMediaTime()
-        let elapsed = now - lastHoverSampleTime
-        if elapsed < Self.hoverQueryInterval {
-            trailingHoverWorkItem?.cancel()
-            let work = DispatchWorkItem { [weak self] in
-                self?.sampleCursorForGreenButton()
+        var cursorSpeed: CGFloat = 0
+        if let prevPoint = lastCursorPoint {
+            let dt = now - lastCursorEventTime
+            if dt > 0.0005 && dt < 0.25 {
+                cursorSpeed = hypot(mouseAppKit.x - prevPoint.x, mouseAppKit.y - prevPoint.y) / CGFloat(dt)
             }
-            trailingHoverWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + (Self.hoverQueryInterval - elapsed + 0.002), execute: work)
+        }
+        lastCursorPoint = mouseAppKit
+        lastCursorEventTime = now
+
+        // Skip intermediate AX hit-tests while sweeping fast across the screen;
+        // a single coalesced trailing check runs automatically as soon as the sweep slows/stops.
+        if cursorSpeed > Self.maxImmediateSweepSpeed {
+            cancelPendingPresentation()
+            scheduleTrailingHoverSample(delay: 0.022)
             return
         }
 
-        trailingHoverWorkItem?.cancel()
-        trailingHoverWorkItem = nil
+        let elapsed = now - lastHoverSampleTime
+        if elapsed < Self.hoverQueryInterval {
+            scheduleTrailingHoverSample(delay: Self.hoverQueryInterval - elapsed + 0.002)
+            return
+        }
+
+        cancelTrailingHoverSample()
         sampleCursorForGreenButton()
     }
 
     private func sampleCursorForGreenButton() {
-        lastHoverSampleTime = CACurrentMediaTime()
+        let now = CACurrentMediaTime()
+        lastHoverSampleTime = now
         guard isHoverGridEnabled, NSEvent.pressedMouseButtons == 0 else {
             cancelPendingPresentation()
             return
@@ -657,11 +704,17 @@ class GreenButtonManager {
             } else {
                 cancelPendingPresentation()
             }
+        } else if let negPoint = lastNegativeHitPoint, (now - lastNegativeHitTime) < Self.negativeHitTTL {
+            let dx = mouseQuartz.x - negPoint.x
+            let dy = mouseQuartz.y - negPoint.y
+            if (dx * dx + dy * dy) <= Self.negativeHitRadiusSquared {
+                return
+            }
         }
 
         guard !hoverQueryInFlight else { return }
         hoverQueryInFlight = true
-        let queryStartedAt = CACurrentMediaTime()
+        let queryStartedAt = now
 
         stateLock.lock()
         let ignoredBundleIds = tapSnapshot.ignoredBundleIds
@@ -673,9 +726,12 @@ class GreenButtonManager {
                 guard let self else { return }
                 self.hoverQueryInFlight = false
                 guard let hitResult else {
+                    self.lastNegativeHitPoint = mouseQuartz
+                    self.lastNegativeHitTime = CACurrentMediaTime()
                     self.cancelPendingPresentation()
                     return
                 }
+                self.invalidateNegativeHitCache()
                 let alreadyElapsed = CACurrentMediaTime() - queryStartedAt
                 let remainingDwell = max(0, Self.hoverDwellDelay - alreadyElapsed)
                 self.schedulePresentation(
@@ -696,23 +752,18 @@ class GreenButtonManager {
         guard let element = AccessibilityElement(quartzPoint) else { return nil }
         element.setMessagingTimeout(0.04)
 
-        guard element.isGreenStoplightButton else { return nil }
+        guard let windowElement = element.greenStoplightParentWindow() else { return nil }
+        windowElement.setMessagingTimeout(0.04)
 
         let buttonFrame = element.frame
         guard !buttonFrame.isNull, buttonFrame.insetBy(dx: -4, dy: -4).contains(quartzPoint) else { return nil }
-
-        guard let windowElement = element.windowElement else { return nil }
-        windowElement.setMessagingTimeout(0.04)
 
         if let bundleId = windowElement.bundleIdentifier ?? element.bundleIdentifier,
            ignoredBundleIds.contains(bundleId) {
             return nil
         }
 
-        guard windowElement.isSheet != true,
-              windowElement.isSystemDialog != true,
-              windowElement.isResizable()
-        else {
+        guard windowElement.isEligibleStandardWindow() else {
             return nil
         }
 
@@ -900,6 +951,7 @@ class GreenButtonManager {
     }
 
     func dismissPanel() {
+        cancelTrailingHoverSample()
         cancelPendingPresentation()
         cancelScheduledDismiss()
         hidePreviewFootprint()
@@ -1054,7 +1106,9 @@ class GreenButtonManager {
     // MARK: - Helpers
 
     private func orderedScreens() -> [NSScreen] {
-        NSScreen.screens.sorted { a, b in
+        let screens = NSScreen.screens
+        guard screens.count > 1 else { return screens }
+        return screens.sorted { a, b in
             if abs(a.frame.minX - b.frame.minX) > 1 {
                 return a.frame.minX < b.frame.minX
             }

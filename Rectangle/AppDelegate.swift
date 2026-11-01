@@ -342,19 +342,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     @objc func toggleLaunchOnLoginMenuItem(_ sender: NSMenuItem) {
         StartupPreferencesManager.shared.launchOnLogin.toggle()
-        syncStartupMenuItems()
+        syncStartupMenuItems(refreshSystemStatus: false)
     }
 
     @MainActor
     @objc func toggleShowSettingsOnLaunchMenuItem(_ sender: NSMenuItem) {
         StartupPreferencesManager.shared.showSettingsOnLaunch.toggle()
-        syncStartupMenuItems()
+        syncStartupMenuItems(refreshSystemStatus: false)
     }
 
     @MainActor
-    func syncStartupMenuItems() {
+    func syncStartupMenuItems(refreshSystemStatus: Bool = false) {
         let prefs = StartupPreferencesManager.shared
-        prefs.refreshFromSystem()
+        if refreshSystemStatus {
+            prefs.refreshFromSystem()
+        } else if prefs.showSettingsOnLaunch != Defaults.showSettingsOnLaunch.enabled {
+            prefs.refreshFromSystem()
+        }
         launchOnLoginMenuItem?.state = prefs.launchOnLogin ? .on : .off
         showSettingsOnLaunchMenuItem?.state = prefs.showSettingsOnLaunch ? .on : .off
     }
@@ -362,8 +366,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func checkLaunchOnLogin() {
         StartupPreferencesManager.shared.syncOnAppLaunch()
+        syncStartupMenuItems(refreshSystemStatus: false)
     }
-    
+
 }
 
 extension AppDelegate: NSMenuDelegate {
@@ -386,9 +391,16 @@ extension AppDelegate: NSMenuDelegate {
         
         updateWindowActionMenuItems(menu: menu)
         updateTodoModeMenuItems(menu: menu)
-        Task { @MainActor [weak self] in
-            self?.syncStartupMenuItems()
-            self?.syncUpdateMenuItemTitle()
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                self.syncStartupMenuItems(refreshSystemStatus: false)
+                self.syncUpdateMenuItemTitle()
+            }
+        } else {
+            Task { @MainActor [weak self] in
+                self?.syncStartupMenuItems(refreshSystemStatus: false)
+                self?.syncUpdateMenuItemTitle()
+            }
         }
 
         viewLoggingMenuItem.keyEquivalentModifierMask = .option
