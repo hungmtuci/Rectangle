@@ -48,11 +48,15 @@ cp "${EXECUTABLE_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 /usr/bin/strip -x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" 2>/dev/null || true
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
-# Copy dynamic frameworks (if any) and SwiftPM resource bundles
+# Copy only dynamic frameworks actually linked by the executable (prevents copying stale .build artifacts)
+LINKED_RPATHS="$(/usr/bin/otool -L "${EXECUTABLE_PATH}" | awk '{print $1}' | grep '^@rpath/' || true)"
 for fw in "${BIN_DIR}"/*.framework; do
     if [[ -d "${fw}" ]]; then
-        mkdir -p "${APP_BUNDLE}/Contents/Frameworks"
-        cp -R "${fw}" "${APP_BUNDLE}/Contents/Frameworks/"
+        fw_name="$(basename "${fw}")"
+        if echo "${LINKED_RPATHS}" | grep -q "@rpath/${fw_name}/"; then
+            mkdir -p "${APP_BUNDLE}/Contents/Frameworks"
+            cp -R "${fw}" "${APP_BUNDLE}/Contents/Frameworks/"
+        fi
     fi
 done
 
