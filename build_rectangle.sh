@@ -6,12 +6,15 @@ APP_NAME="Rectangle"
 APP_BUNDLE="${PROJECT_DIR}/${APP_NAME}.app"
 WORKSPACE_APP_BUNDLE="$(cd "${PROJECT_DIR}/.." && pwd)/${APP_NAME}.app"
 DIST_DIR="${PROJECT_DIR}/dist"
-RECTANGLE_VERSION="${RECTANGLE_VERSION:-2.1.2-custom}"
-RECTANGLE_BUILD="${RECTANGLE_BUILD:-114}"
+RECTANGLE_VERSION="${RECTANGLE_VERSION:-2.1.3-custom}"
+RECTANGLE_BUILD="${RECTANGLE_BUILD:-115}"
 
-SKIP_INSTALL=0
+SKIP_INSTALL=1
 for arg in "$@"; do
     case "${arg}" in
+        --install)
+            SKIP_INSTALL=0
+            ;;
         --skip-install)
             SKIP_INSTALL=1
             ;;
@@ -244,34 +247,35 @@ rm -f "${VERSIONED_ZIP}" "${LATEST_ZIP}"
 cp -f "${VERSIONED_ZIP}" "${LATEST_ZIP}"
 
 rm -rf "${APP_BUNDLE}"
-cp -R -X "${TMP_SIGN_DIR}/${APP_NAME}.app" "${APP_BUNDLE}"
+/usr/bin/ditto --norsrc --noextattr "${TMP_SIGN_DIR}/${APP_NAME}.app" "${APP_BUNDLE}"
+xattr -cr "${APP_BUNDLE}" 2>/dev/null || true
+codesign --verify --deep --strict "${APP_BUNDLE}"
+
+if [[ "${WORKSPACE_APP_BUNDLE}" != "${APP_BUNDLE}" ]]; then
+    rm -rf "${WORKSPACE_APP_BUNDLE}"
+    /usr/bin/ditto --norsrc --noextattr "${TMP_SIGN_DIR}/${APP_NAME}.app" "${WORKSPACE_APP_BUNDLE}"
+    xattr -cr "${WORKSPACE_APP_BUNDLE}" 2>/dev/null || true
+    codesign --verify --deep --strict "${WORKSPACE_APP_BUNDLE}"
+fi
 
 INSTALLED_IN_APPLICATIONS=0
 if [[ "${SKIP_INSTALL}" == "0" ]]; then
-    rm -rf "${WORKSPACE_APP_BUNDLE}"
-    cp -R -X "${TMP_SIGN_DIR}/${APP_NAME}.app" "${WORKSPACE_APP_BUNDLE}"
-    sleep 0.5
-    xattr -cr "${APP_BUNDLE}" "${WORKSPACE_APP_BUNDLE}" 2>/dev/null || true
-
     if [[ -w "/Applications" ]]; then
         killall "${APP_NAME}" 2>/dev/null || true
         sleep 0.2
         rm -rf "/Applications/${APP_NAME}.app"
-        cp -R -X "${TMP_SIGN_DIR}/${APP_NAME}.app" "/Applications/${APP_NAME}.app"
+        /usr/bin/ditto --norsrc --noextattr "${TMP_SIGN_DIR}/${APP_NAME}.app" "/Applications/${APP_NAME}.app"
         xattr -cr "/Applications/${APP_NAME}.app" 2>/dev/null || true
+        codesign --force --deep --sign - "/Applications/${APP_NAME}.app"
         INSTALLED_IN_APPLICATIONS=1
     fi
-else
-    xattr -cr "${APP_BUNDLE}" 2>/dev/null || true
 fi
 rm -rf "${TMP_SIGN_DIR}"
 
 echo "Built successfully:"
 echo "  - ${APP_BUNDLE}"
+echo "  - ${WORKSPACE_APP_BUNDLE}"
 echo "  - ${VERSIONED_ZIP}"
-if [[ "${SKIP_INSTALL}" == "0" ]]; then
-    echo "  - ${WORKSPACE_APP_BUNDLE}"
-    if [[ "${INSTALLED_IN_APPLICATIONS}" == "1" ]]; then
-        echo "  - /Applications/${APP_NAME}.app"
-    fi
+if [[ "${INSTALLED_IN_APPLICATIONS}" == "1" ]]; then
+    echo "  - /Applications/${APP_NAME}.app"
 fi

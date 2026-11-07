@@ -85,10 +85,8 @@ final class StartupPreferencesManager {
         isSyncingInternally = true
         defer { isSyncingInternally = false }
         let systemRegistered = LaunchOnLogin.isEnabled
-        if systemRegistered && !Defaults.launchOnLogin.enabled {
-            Defaults.launchOnLogin.enabled = true
-        }
-        self.launchOnLogin = Defaults.launchOnLogin.enabled || systemRegistered
+        Defaults.launchOnLogin.enabled = systemRegistered
+        self.launchOnLogin = systemRegistered
         self.showSettingsOnLaunch = Defaults.showSettingsOnLaunch.enabled
     }
 

@@ -23,11 +23,16 @@ class GreenButtonManager {
         }
     }
 
-    private struct TapSnapshot {
+    private struct PointerTapSnapshot {
         var isPanelVisible: Bool = false
+        var panelFrame: CGRect = .null
+        var corridorFrame: CGRect = .null
+        var greenButtonRect: CGRect = .null
         var placement: GreenButtonPopoverPlacement?
         var interceptsGreenButtonClick: Bool = true
         var targetWindowElement: AccessibilityElement?
+        var hoveredWindowElement: AccessibilityElement?
+        var hoveredButtonQuartzFrame: CGRect = .null
         var screenCount: Int = 1
         var primaryScreenMaxY: CGFloat = 0
         var ignoredBundleIds: Set<String> = []
@@ -35,6 +40,7 @@ class GreenButtonManager {
 
     static let toggleGridDefaultsKey = "toggleGreenButtonGrid"
     static let defaultsKeys = [toggleGridDefaultsKey]
+    private static let syntheticOcclusionUserData: Int64 = 0x5243_5447_4F43_434C
 
     private static weak var sharedInstance: GreenButtonManager?
     private static var shortcutBindingsSessionActive = true
@@ -57,9 +63,10 @@ class GreenButtonManager {
     private var interactionMonitor: PassiveEventMonitor!
 
     private let stateLock = NSLock()
-    private var tapSnapshot = TapSnapshot()
+    private var pointerTapSnapshot = PointerTapSnapshot()
     private var clickWindowElement: AccessibilityElement?
     private var clickButtonFrame: CGRect?
+    private var hoveredGreenButtonCandidate: (windowElement: AccessibilityElement, buttonQuartzFrame: CGRect)?
 
     private let axQueue = DispatchQueue(label: "com.knollsoft.Rectangle.greenButtonHoverAX", qos: .userInteractive)
     private let screenDetection = ScreenDetection()
@@ -67,7 +74,6 @@ class GreenButtonManager {
     private lazy var gridPanel: GreenButtonGridPanel = makeGridPanel()
     private lazy var footprintWindow = FootprintWindow()
     private var isPreviewVisible = false
-    private var isPostingSyntheticOcclusionMove = false
 
     private var activeTarget: ActiveTarget?
     private var pendingTarget: ActiveTarget?
@@ -90,7 +96,7 @@ class GreenButtonManager {
 
         clickMonitor = ActiveEventMonitor(
             mask: [.leftMouseDown, .leftMouseUp],
-            filterer: { [weak self] event in self?.filterClick(event) ?? false }
+            filterer: { [weak self] event in self?.shouldSwallowPointerEvent(event) ?? false }
         )
 
         keyMonitor = ActiveEventMonitor(
@@ -98,8 +104,8 @@ class GreenButtonManager {
             filterer: { [weak self] event in self?.filterPanelKeyDown(event) ?? false }
         )
 
-        hoverMonitor = PassiveEventMonitor(mask: [.mouseMoved]) { [weak self] _ in
-            self?.handleMouseMoved()
+        hoverMonitor = PassiveEventMonitor(mask: [.mouseMoved]) { [weak self] event in
+            self?.handleMouseMoved(event)
         }
 
         interactionMonitor = PassiveEventMonitor(
@@ -301,15 +307,19 @@ class GreenButtonManager {
             clickMonitor.stop()
         }
 
-        if isHoverGridEnabled {
+        if isHoverGridEnabled || isClickEnabled {
             if !hoverMonitor.running {
                 hoverMonitor.start()
             }
+        } else {
+            hoverMonitor.stop()
+        }
+
+        if isHoverGridEnabled {
             if !interactionMonitor.running {
                 interactionMonitor.start()
             }
         } else {
-            hoverMonitor.stop()
             if activeTarget == nil || !gridPanel.isOpenedViaKeyboard {
                 interactionMonitor.stop()
                 dismissPanel()
@@ -330,15 +340,31 @@ class GreenButtonManager {
         let placement = panelVisible ? gridPanel.currentPlacement : nil
         let intercepts = isClickEnabled && (placement?.hasButtonBridge == true)
         let targetElement = panelVisible ? activeTarget?.windowElement : nil
+        let hoveredElement = activeTarget?.windowElement ?? pendingTarget?.windowElement ?? hoveredGreenButtonCandidate?.windowElement
+        let hoveredButtonQuartz = activeTarget?.buttonQuartzFrame ?? pendingTarget?.buttonQuartzFrame ?? hoveredGreenButtonCandidate?.buttonQuartzFrame ?? .null
+        let greenBtnAppKitRect: CGRect = {
+            if let placement, placement.hasButtonBridge {
+                return placement.screenButtonBridgeRect
+            }
+            if !hoveredButtonQuartz.isNull, maxY > 0 {
+                return hoveredButtonQuartz.screenFlipped(primaryScreenMaxY: maxY)
+            }
+            return .null
+        }()
         let screenCount = panelVisible ? max(1, activeTarget?.screens.count ?? 1) : 1
         Self.isPopoverActive = panelVisible || pendingTarget != nil
 
         stateLock.lock()
-        tapSnapshot = TapSnapshot(
+        pointerTapSnapshot = PointerTapSnapshot(
             isPanelVisible: panelVisible,
+            panelFrame: placement?.screenCardRect ?? .null,
+            corridorFrame: placement?.screenButtonBridgeRect ?? .null,
+            greenButtonRect: greenBtnAppKitRect,
             placement: placement,
             interceptsGreenButtonClick: intercepts,
             targetWindowElement: targetElement,
+            hoveredWindowElement: hoveredElement,
+            hoveredButtonQuartzFrame: hoveredButtonQuartz,
             screenCount: screenCount,
             primaryScreenMaxY: maxY,
             ignoredBundleIds: ignored
@@ -355,7 +381,7 @@ class GreenButtonManager {
         }
 
         stateLock.lock()
-        let ignoredBundleIds = tapSnapshot.ignoredBundleIds
+        let ignoredBundleIds = pointerTapSnapshot.ignoredBundleIds
         stateLock.unlock()
 
         let cursorAppKit = NSEvent.mouseLocation
@@ -412,11 +438,11 @@ class GreenButtonManager {
         presentPanel(for: target, anchor: .cursor(cursorAppKitPoint: cursorAppKit), preselectKeyboardRegion: true)
     }
 
-    // MARK: - Event Tap Click Handling
+    // MARK: - Event Tap Click Handling (Zero AX IPC on Background RunLoopThread)
 
-    private func filterClick(_ event: NSEvent) -> Bool {
+    private func shouldSwallowPointerEvent(_ event: NSEvent) -> Bool {
         stateLock.lock()
-        let snapshot = tapSnapshot
+        let snapshot = pointerTapSnapshot
         stateLock.unlock()
 
         switch event.type {
@@ -428,13 +454,13 @@ class GreenButtonManager {
                 return false
             }
 
-            if snapshot.isPanelVisible, let placement = snapshot.placement, snapshot.primaryScreenMaxY > 0 {
+            if snapshot.isPanelVisible, snapshot.primaryScreenMaxY > 0 {
                 let appKitPoint = CGPoint(x: location.x, y: snapshot.primaryScreenMaxY - location.y)
                 if snapshot.interceptsGreenButtonClick,
-                   placement.hasButtonBridge,
-                   placement.screenButtonBridgeRect.contains(appKitPoint),
+                   !snapshot.greenButtonRect.isNull,
+                   snapshot.greenButtonRect.contains(appKitPoint),
                    let targetWindow = snapshot.targetWindowElement {
-                    let bridgeQuartzRect = placement.screenButtonBridgeRect.screenFlipped(primaryScreenMaxY: snapshot.primaryScreenMaxY)
+                    let bridgeQuartzRect = snapshot.greenButtonRect.screenFlipped(primaryScreenMaxY: snapshot.primaryScreenMaxY)
                     stateLock.lock()
                     self.clickWindowElement = targetWindow
                     self.clickButtonFrame = bridgeQuartzRect
@@ -446,28 +472,22 @@ class GreenButtonManager {
                     }
                     return true
                 }
-                if placement.screenCardRect.insetBy(dx: -4, dy: -4).contains(appKitPoint) {
+                if !snapshot.panelFrame.isNull, snapshot.panelFrame.insetBy(dx: -4, dy: -4).contains(appKitPoint) {
                     return false
                 }
             }
 
             guard
-                let element = AccessibilityElement(location),
-                let windowElement = element.greenStoplightParentWindow(),
-                case let buttonFrame = element.frame,
-                buttonFrame != .null
+                !snapshot.hoveredButtonQuartzFrame.isNull,
+                snapshot.hoveredButtonQuartzFrame.insetBy(dx: -4, dy: -4).contains(location),
+                let windowElement = snapshot.hoveredWindowElement
             else {
-                return false
-            }
-
-            if let bundleId = windowElement.bundleIdentifier ?? element.bundleIdentifier,
-               snapshot.ignoredBundleIds.contains(bundleId) {
                 return false
             }
 
             stateLock.lock()
             self.clickWindowElement = windowElement
-            self.clickButtonFrame = buttonFrame
+            self.clickButtonFrame = snapshot.hoveredButtonQuartzFrame
             stateLock.unlock()
 
             DispatchQueue.main.async { [weak self] in
@@ -502,7 +522,7 @@ class GreenButtonManager {
 
     private func filterPanelKeyDown(_ event: NSEvent) -> Bool {
         stateLock.lock()
-        let snapshot = tapSnapshot
+        let snapshot = pointerTapSnapshot
         stateLock.unlock()
 
         guard snapshot.isPanelVisible else { return false }
@@ -617,8 +637,12 @@ class GreenButtonManager {
         }
     }
 
-    private func handleMouseMoved() {
-        guard isHoverGridEnabled, !isPostingSyntheticOcclusionMove else { return }
+    private func handleMouseMoved(_ event: NSEvent? = nil) {
+        if let cgEvent = event?.cgEvent,
+           cgEvent.getIntegerValueField(.eventSourceUserData) == Self.syntheticOcclusionUserData {
+            return
+        }
+        guard isHoverGridEnabled || isClickEnabled else { return }
 
         if NSEvent.pressedMouseButtons != 0 {
             cancelTrailingHoverSample()
@@ -687,7 +711,7 @@ class GreenButtonManager {
     private func sampleCursorForGreenButton() {
         let now = CACurrentMediaTime()
         lastHoverSampleTime = now
-        guard isHoverGridEnabled, NSEvent.pressedMouseButtons == 0 else {
+        guard isHoverGridEnabled || isClickEnabled, NSEvent.pressedMouseButtons == 0 else {
             cancelPendingPresentation()
             return
         }
@@ -704,6 +728,13 @@ class GreenButtonManager {
             } else {
                 cancelPendingPresentation()
             }
+        } else if let hovered = hoveredGreenButtonCandidate {
+            if hovered.buttonQuartzFrame.insetBy(dx: -4, dy: -4).contains(mouseQuartz) {
+                return
+            } else {
+                hoveredGreenButtonCandidate = nil
+                refreshTapSnapshot()
+            }
         } else if let negPoint = lastNegativeHitPoint, (now - lastNegativeHitTime) < Self.negativeHitTTL {
             let dx = mouseQuartz.x - negPoint.x
             let dy = mouseQuartz.y - negPoint.y
@@ -717,7 +748,7 @@ class GreenButtonManager {
         let queryStartedAt = now
 
         stateLock.lock()
-        let ignoredBundleIds = tapSnapshot.ignoredBundleIds
+        let ignoredBundleIds = pointerTapSnapshot.ignoredBundleIds
         stateLock.unlock()
 
         axQueue.async { [weak self] in
@@ -728,10 +759,15 @@ class GreenButtonManager {
                 guard let hitResult else {
                     self.lastNegativeHitPoint = mouseQuartz
                     self.lastNegativeHitTime = CACurrentMediaTime()
+                    self.hoveredGreenButtonCandidate = nil
                     self.cancelPendingPresentation()
+                    self.refreshTapSnapshot()
                     return
                 }
                 self.invalidateNegativeHitCache()
+                self.hoveredGreenButtonCandidate = (hitResult.windowElement, hitResult.buttonQuartzFrame)
+                self.refreshTapSnapshot()
+                guard self.isHoverGridEnabled else { return }
                 let alreadyElapsed = CACurrentMediaTime() - queryStartedAt
                 let remainingDwell = max(0, Self.hoverDwellDelay - alreadyElapsed)
                 self.schedulePresentation(
@@ -905,17 +941,14 @@ class GreenButtonManager {
 
     private func notifyWindowServerOfBridgeOcclusion() {
         let currentQuartz = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation.screenFlipped
-        isPostingSyntheticOcclusionMove = true
-        if let moveEvent = CGEvent(
+        if let syntheticEvent = CGEvent(
             mouseEventSource: nil,
             mouseType: .mouseMoved,
             mouseCursorPosition: currentQuartz,
             mouseButton: .left
         ) {
-            moveEvent.post(tap: .cgSessionEventTap)
-        }
-        DispatchQueue.main.async { [weak self] in
-            self?.isPostingSyntheticOcclusionMove = false
+            syntheticEvent.setIntegerValueField(.eventSourceUserData, value: Self.syntheticOcclusionUserData)
+            syntheticEvent.post(tap: .cgSessionEventTap)
         }
     }
 
@@ -926,6 +959,7 @@ class GreenButtonManager {
         if activeTarget == nil {
             Self.isPopoverActive = false
         }
+        refreshTapSnapshot()
     }
 
     private func scheduleDismissIfNeeded() {

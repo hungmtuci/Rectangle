@@ -116,11 +116,11 @@ final class GitHubSoftwareUpdater {
     }
 
     var currentVersionString: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "2.1.2-custom"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "2.1.3-custom"
     }
 
     var currentBuildString: String {
-        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "114"
+        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "115"
     }
 
     func openRepositoryPage() {
@@ -630,16 +630,31 @@ final class GitHubSoftwareUpdater {
             i=$((i + 1))
         done
 
+        export SRC_APP DST_APP
         DST_PARENT="$(dirname "$DST_APP")"
-        if [ -w "$DST_PARENT" ] && { [ ! -e "$DST_APP" ] || [ -w "$DST_APP" ]; } && rm -rf "$DST_APP" 2>/dev/null && /usr/bin/ditto --norsrc --noextattr "$SRC_APP" "$DST_APP" 2>/dev/null; then
-            /usr/bin/xattr -cr "$DST_APP" 2>/dev/null || true
+        DST_NEW="${DST_APP}.new"
+        rm -rf "$DST_NEW" 2>/dev/null || true
+        if [ -w "$DST_PARENT" ] && { [ ! -e "$DST_APP" ] || [ -w "$DST_APP" ]; } && /usr/bin/ditto --norsrc --noextattr "$SRC_APP" "$DST_NEW" 2>/dev/null; then
+            /usr/bin/xattr -cr "$DST_NEW" 2>/dev/null || true
+            /usr/bin/codesign --force --deep --sign - "$DST_NEW" 2>/dev/null || true
+            rm -rf "$DST_APP" 2>/dev/null && mv -f "$DST_NEW" "$DST_APP" 2>/dev/null || rm -rf "$DST_NEW" 2>/dev/null
         else
-            /usr/bin/osascript -e "do shell script \\"rm -rf '$DST_APP' && /usr/bin/ditto --norsrc --noextattr '$SRC_APP' '$DST_APP' && /usr/bin/xattr -cr '$DST_APP'\\" with administrator privileges" 2>/dev/null || true
+            /usr/bin/osascript \
+                -e 'set srcApp to system attribute "SRC_APP"' \
+                -e 'set dstApp to system attribute "DST_APP"' \
+                -e 'set dstNew to dstApp & ".new"' \
+                -e 'set cmd to "rm -rf " & quoted form of dstNew & " && /usr/bin/ditto --norsrc --noextattr " & quoted form of srcApp & " " & quoted form of dstNew & " && /usr/bin/xattr -cr " & quoted form of dstNew & " && /usr/bin/codesign --force --deep --sign - " & quoted form of dstNew & " && rm -rf " & quoted form of dstApp & " && mv -f " & quoted form of dstNew & " " & quoted form of dstApp' \
+                -e 'do shell script cmd with administrator privileges' 2>/dev/null || true
         fi
 
         if [ -n "$DST_SECONDARY" ] && [ -d "$DST_SECONDARY" ]; then
-            rm -rf "$DST_SECONDARY" 2>/dev/null && /usr/bin/ditto --norsrc --noextattr "$SRC_APP" "$DST_SECONDARY" 2>/dev/null || true
-            /usr/bin/xattr -cr "$DST_SECONDARY" 2>/dev/null || true
+            DST_SEC_NEW="${DST_SECONDARY}.new"
+            rm -rf "$DST_SEC_NEW" 2>/dev/null || true
+            if /usr/bin/ditto --norsrc --noextattr "$SRC_APP" "$DST_SEC_NEW" 2>/dev/null; then
+                /usr/bin/xattr -cr "$DST_SEC_NEW" 2>/dev/null || true
+                /usr/bin/codesign --force --deep --sign - "$DST_SEC_NEW" 2>/dev/null || true
+                rm -rf "$DST_SECONDARY" 2>/dev/null && mv -f "$DST_SEC_NEW" "$DST_SECONDARY" 2>/dev/null || rm -rf "$DST_SEC_NEW" 2>/dev/null
+            fi
         fi
 
         /usr/bin/open "$DST_APP"
